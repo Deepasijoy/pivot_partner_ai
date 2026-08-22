@@ -35,9 +35,8 @@ Ready to restart your career? Upload your resume to get started! 🚀`,
     },
   ])
 
-  const handleSendMessage = (content: string) => {
-    // User message is added by Sidebar via chatWithGroq
-    // This function just tracks it if needed
+  const handleSendMessage = (_content: string) => {
+  // Message is handled by Sidebar
   }
 
   const handleQuickAction = (action: 'jobs' | 'tax' | 'resume') => {
