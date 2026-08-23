@@ -5,49 +5,59 @@ import TabNavigation from './components/TabNavigation'
 import JobMatcherTab from './components/JobMatcherTab'
 import './styles/theme.css'
 
+type ActiveTab = 'relocation' | 'career' | 'life' | 'community'
+
 function App() {
-  const [activeTab, setActiveTab] = useState<'career' | 'tax' | 'portfolio'>('career')
-  const [parsedProfile, setParsedProfile] = useState<ResumeProfile | null>(null)
+  const [activeTab, setActiveTab] =
+    useState<ActiveTab>('relocation')
+
+  const [parsedProfile, setParsedProfile] =
+    useState<ResumeProfile | null>(null)
+  const [origin, setOrigin] = useState('Mumbai')
+  const [destination, setDestination] = useState('Accra')
+  const [relocationDate, setRelocationDate] = useState('')    
+
   const [messages, setMessages] = useState<any[]>([
     {
       id: '1',
       role: 'assistant',
       content: `Welcome to PivotPartner! 🌍
 
-I help trailing spouses find remote careers that pay globally, not locally.
+I'm your AI relocation and career copilot for moving internationally with your partner.
 
-📋 Here's how I work:
+I can help you:
 
-✅ Upload your resume
-   ↓ I analyze your skills & experience
+🌍 Plan your relocation
+💼 Rebuild your career and income
+💰 Compare local vs remote opportunities
+📋 Understand work eligibility and EOR options
+🏠 Plan your new life
+👥 Find professional and local communities
 
-✅ Get matched with remote jobs
-   ↓ See opportunities paying 2-3x local salary
-
-✅ Explore relocation insights
-   ↓ Tax implications, schools, housing in 100+ cities
-
-✅ Build optimized portfolio
-   ↓ Land your dream remote role
-
-Ready to restart your career? Upload your resume to get started! 🚀`,
+Tell me where you're moving and what you do, and I'll help you build your transition plan. 🚀`,
       timestamp: new Date(),
     },
   ])
 
+  // Chat is handled by Sidebar → chatService → backend → Groq
   const handleSendMessage = (_content: string) => {
-  // Message is handled by Sidebar
+    // Sidebar handles the actual chat.
   }
 
-  const handleQuickAction = (action: 'jobs' | 'tax' | 'resume') => {
+  // Quick actions from Sidebar
+  const handleQuickAction = (
+    action: 'jobs' | 'tax' | 'resume'
+  ) => {
     if (action === 'jobs') {
       setActiveTab('career')
+
       const userMsg = {
         id: Date.now().toString(),
         role: 'user',
         content: '💼 Show Remote Jobs',
         timestamp: new Date(),
       }
+
       setMessages((prev) => [...prev, userMsg])
 
       setTimeout(() => {
@@ -55,86 +65,92 @@ Ready to restart your career? Upload your resume to get started! 🚀`,
           id: (Date.now() + 100).toString(),
           role: 'assistant',
           content: parsedProfile
-            ? `🎯 Perfect! I found remote job opportunities for you:
+            ? `🎯 Perfect! Let's look at opportunities that fit your profile.
 
-📊 Your Profile Summary:
+📊 Your Profile:
 • ${parsedProfile.yearsExperience} years of experience
 • Seniority: ${parsedProfile.seniority || 'Professional Level'}
 • Industries: ${parsedProfile.industries?.join(', ') || 'Various'}
-• Top Skills: ${parsedProfile.skills?.slice(0, 3).map(s => s.name).join(', ') || 'expertise'}
+• Top Skills: ${
+                parsedProfile.skills
+                  ?.slice(0, 3)
+                  .map((s) => s.name)
+                  .join(', ') || 'Your professional skills'
+              }
 
-💼 Remote Opportunities Available:
-• Full-time Remote: ${Math.floor(Math.random() * 10) + 8} positions
-• Freelance Projects: ${Math.floor(Math.random() * 5) + 2} active gigs
-• Contract Work: ${Math.floor(Math.random() * 4) + 2} opportunities
+💼 We'll compare:
+• Local opportunities
+• Remote opportunities
+• Freelance opportunities
+• Salary potential
+• Work eligibility
 
-Check the Career tab to see detailed matches with:
-✅ Salary ranges (often 2-3x your local rate!)
-✅ Skill gaps you need to address
-✅ Learning resources to bridge gaps
-✅ Estimated time to job readiness
+Use the Career & Income tab to explore your options.`
+            : `📋 Let's find the right opportunities for you.
 
-Click on any job to unlock Tax Safe-Zone for that location! 🌍`
-            : `📋 I'd love to show you remote job opportunities! First, please upload your resume in the Career tab so I can:
-  
-✅ Extract your skills and experience
-✅ Analyze your career profile
-✅ Match you with the best global opportunities
+First, upload your resume in the Career & Income tab so I can:
+
+✅ Extract your skills
+✅ Analyze your experience
+✅ Identify suitable career paths
+✅ Compare local vs remote opportunities
 
 Let's get started! 🚀`,
           timestamp: new Date(),
         }
+
         setMessages((prev) => [...prev, aiMsg])
       }, 800)
-    } else if (action === 'tax') {
+    }
+
+    if (action === 'tax') {
+      setActiveTab('relocation')
+
       const userMsg = {
         id: Date.now().toString(),
         role: 'user',
-        content: '📊 Check Tax Safe-Zone',
+        content: '📊 Check Relocation & Tax',
         timestamp: new Date(),
       }
+
       setMessages((prev) => [...prev, userMsg])
 
       setTimeout(() => {
         const aiMsg = {
           id: (Date.now() + 100).toString(),
           role: 'assistant',
-          content: `📊 Tax Safe-Zone is your relocation guide! It unlocks when you select a remote job.
+          content: `📊 Let's look at the financial side of your relocation.
 
-Once unlocked, you'll see:
+I'll help you think through:
 
-💰 Tax Implications
-   Compare your local tax rate vs remote work tax impact
-   See how much you can save
+💰 Local vs remote income
+🏦 Banking considerations
+📊 Cost of living
+🏠 Housing costs
+🧾 Tax considerations
+🌍 Cross-border work considerations
+💼 EOR possibilities
 
-🏫 Schools Information
-   Find schools in your destination city
-   Check ratings, curricula, fees
-   See what expat families recommend
+For specific tax or legal decisions, we'll flag where professional advice may be required.
 
-🏠 Housing & Neighborhoods
-   Compare neighborhoods by safety, walkability, vibe
-   Browse housing listings with prices
-   Check commute times and amenities
-
-🎯 Cost of Living Analysis
-   Breakdown: rent, utilities, transport, food
-   See if your remote salary goes further
-   Make informed relocation decisions
-
-Select a remote job from the Career tab to unlock Tax Safe-Zone for that location!`,
+Tell me your destination and expected income to start the analysis.`,
           timestamp: new Date(),
         }
+
         setMessages((prev) => [...prev, aiMsg])
       }, 800)
-    } else if (action === 'resume') {
+    }
+
+    if (action === 'resume') {
       setActiveTab('career')
+
       const userMsg = {
         id: Date.now().toString(),
         role: 'user',
         content: '📄 Adapt My Resume',
         timestamp: new Date(),
       }
+
       setMessages((prev) => [...prev, userMsg])
 
       setTimeout(() => {
@@ -142,68 +158,79 @@ Select a remote job from the Career tab to unlock Tax Safe-Zone for that locatio
           id: (Date.now() + 100).toString(),
           role: 'assistant',
           content: parsedProfile
-            ? `📄 I can help you adapt your resume for remote roles!
+            ? `📄 I can help reposition your profile for the global market.
 
-Your Current Profile Highlights:
-✅ ${parsedProfile.skills?.slice(0, 2).map(s => s.name).join(' and ')} (core strengths)
-✅ ${parsedProfile.yearsExperience} years experience (strong foundation)
-✅ ${parsedProfile.industries?.slice(0, 2).join(', ')} (relevant industries)
+Your current strengths include:
 
-Here's what I'll optimize:
+✅ ${
+                parsedProfile.skills
+                  ?.slice(0, 3)
+                  .map((s) => s.name)
+                  .join(', ') || 'Your professional skills'
+              }
 
-🎯 Keyword Optimization
-   Add remote-friendly keywords (async communication, timezone-flexible, global collaboration)
-   Highlight distributed team experience
+✅ ${parsedProfile.yearsExperience} years of experience
 
-💼 Remote Skills Emphasis
-   Showcase: self-motivation, time management, written communication
-   Emphasize: remote work experience if any
+✅ ${
+                parsedProfile.industries?.join(', ') ||
+                'Your professional background'
+              }
 
-📊 Achievement Metrics
-   Quantify results: "Increased X by Y%", "Led Z people"
-   Global companies love numbers!
+I'll help emphasize:
 
-🌍 Global Appeal
-   Mention: multilingual abilities, international experience, visa sponsorship eligibility
-   Show you're ready for global opportunity
+🎯 Transferable skills
+🌍 International experience
+💻 Remote-friendly capabilities
+📊 Measurable achievements
+💼 Target-role keywords
 
-Check the Portfolio Builder tab when unlocked to see your optimized portfolio! 🚀`
-            : `📄 I'd love to help you optimize your resume for remote roles!
+Open Career & Income to continue.`
+            : `📄 Let's optimize your professional profile for the global market.
 
-First, upload your resume in the Career tab so I can:
-✅ Analyze your current experience
-✅ Identify remote-friendly skills
-✅ Suggest keyword optimizations
-✅ Show you how to highlight global appeal
+Upload your resume in the Career & Income tab and I'll help identify:
 
-Let's make your resume stand out to remote employers! 🚀`,
+✅ Transferable skills
+✅ Remote-friendly experience
+✅ Career pivot opportunities
+✅ Skills gaps
+✅ Target roles
+
+Let's make your experience travel with you! 🌍`,
           timestamp: new Date(),
         }
+
         setMessages((prev) => [...prev, aiMsg])
       }, 800)
     }
   }
 
+  // Called when JobMatcherTab successfully analyzes a resume
   const handleProfileParsed = (profile: ResumeProfile) => {
     setParsedProfile(profile)
 
-    // Simulate job breakdown
-    const freelanceJobs = Math.floor(Math.random() * 5) + 2  // 2-7
-    const remoteJobs = Math.floor(Math.random() * 10) + 8    // 8-18
-    const totalJobs = freelanceJobs + remoteJobs
-
-    // Simulate skill gaps
     const allSkills = profile.skills || []
-    const matchedSkills = Math.floor(allSkills.length * 0.7) // 70% match
-    const gapSkills = allSkills.length - matchedSkills
+
+    const matchedSkills = Math.floor(
+      allSkills.length * 0.7
+    )
+
+    const gapSkills = Math.max(
+      allSkills.length - matchedSkills,
+      0
+    )
 
     const gapSkillsList = allSkills
       .slice(-gapSkills)
-      .map(s => s.name)
+      .map((s) => s.name)
       .slice(0, 3)
       .join(', ')
 
-    const readyPercentage = Math.round((matchedSkills / allSkills.length) * 100)
+    const readyPercentage =
+      allSkills.length > 0
+        ? Math.round(
+            (matchedSkills / allSkills.length) * 100
+          )
+        : 0
 
     const aiMsg = {
       id: Date.now().toString(),
@@ -211,120 +238,469 @@ Let's make your resume stand out to remote employers! 🚀`,
       content: `✅ Resume analyzed successfully!
 
 📊 Your Career Profile:
-• Years of Experience: ${profile.yearsExperience}
-• Seniority Level: ${profile.seniority || 'Professional'}
-• Industries: ${profile.industries?.join(', ') || 'Various'}
-• Total Skills Identified: ${profile.skills?.length || 0}
 
-🎯 Job Opportunities Found: ${totalJobs} positions!
-• 💼 Remote Jobs: ${remoteJobs} (higher pay, location flexible)
-• 🤝 Freelance Gigs: ${freelanceJobs} (project-based, flexible)
+• Years of Experience: ${profile.yearsExperience}
+• Seniority: ${profile.seniority || 'Professional'}
+• Industries: ${
+        profile.industries?.join(', ') || 'Various'
+      }
+• Skills Identified: ${allSkills.length}
+
+🎯 Global Career Strategy
+
+I'll now help you compare:
+
+🌍 Local opportunities
+💻 Remote opportunities
+🤝 Freelance opportunities
+💰 Salary potential
+📋 Work eligibility
 
 ⚠️ Skill Gap Analysis:
+
 • Skills Matched: ${matchedSkills}/${allSkills.length}
-• Skills to Develop: ${gapSkillsList}
-• Ready Score: ${readyPercentage}% job-ready
+• Skills to Develop: ${
+        gapSkillsList || 'No major gaps identified'
+      }
+• Ready Score: ${readyPercentage}%
 
-🎯 What would you like to do?
+🎯 Next steps:
 
-1️⃣ See Job Matches Now
-   Browse ${remoteJobs} remote + ${freelanceJobs} freelance opportunities
-   Filter by job type, salary, industry
-   
-2️⃣ Close Skill Gaps First
-   Learn ${gapSkills} missing skills
-   Estimated time: 4-8 weeks
-   Then apply to higher-paying roles
+1️⃣ Explore Career & Income
+2️⃣ Compare local vs remote options
+3️⃣ Check work eligibility
+4️⃣ Build your global professional profile
 
-3️⃣ Build Optimized Portfolio
-   Create resume tailored for your target roles
-   Unlock when you select a job
-
-Which path interests you? Tell me and I'll guide you! 🚀`,
+Your career can travel with you. 🚀`,
       timestamp: new Date(),
     }
+
     setMessages((prev) => [...prev, aiMsg])
   }
 
   return (
     <div className="h-screen flex flex-col bg-white">
-      {/* Enhanced Header */}
+
+      {/* Header */}
       <div className="border-b border-[#F5F5F5] bg-white px-6 py-4 shadow-soft">
         <div className="max-w-full">
+
           <div className="flex items-baseline gap-3 mb-1">
-            <h1 className="text-3xl font-bold text-[#26c485] tracking-tight">PivotPartner AI</h1>
-            <span className="text-xs font-semibold text-[#26c485]/60 uppercase tracking-wider bg-[#26c485]/10 px-2.5 py-1 rounded-full">MVP</span>
+
+            <h1 className="text-3xl font-bold text-[#26c485] tracking-tight">
+              PivotPartner AI
+            </h1>
+
+            <span className="text-xs font-semibold text-[#26c485]/60 uppercase tracking-wider bg-[#26c485]/10 px-2.5 py-1 rounded-full">
+              MVP
+            </span>
+
           </div>
-          <p className="text-sm text-[#333333]/60 font-medium">Your career can travel with you</p>
+
+          <p className="text-sm text-[#333333]/60 font-medium">
+            Your life and career can travel with you
+          </p>
+
         </div>
       </div>
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar (40%) */}
+
+        {/* Sidebar */}
         <div className="w-2/5 border-r border-[#F5F5F5] flex flex-col overflow-hidden bg-white">
+
           <Sidebar
             messages={messages}
             onSendMessage={handleSendMessage}
             onQuickAction={handleQuickAction}
           />
+
         </div>
 
-        {/* Dashboard (60%) */}
+        {/* Dashboard */}
         <div className="w-3/5 flex flex-col overflow-hidden bg-white">
-          <TabNavigation 
-            activeTab={activeTab} 
+
+          <TabNavigation
+            activeTab={activeTab}
             onTabChange={setActiveTab}
-            jobMatched={false}
           />
 
           <div className="flex-1 overflow-y-auto bg-white">
+
+            {/* ============================== */}
+            {/* RELOCATION */}
+            {/* ============================== */}
+
+            {activeTab === 'relocation' && (
+
+              <div className="p-6 space-y-6">
+
+                <div>
+
+                  <p className="text-sm text-[#26c485] font-semibold uppercase tracking-wider">
+                    Your Relocation
+                  </p>
+
+                  
+                  <h2 className="text-3xl font-bold text-[#333333] mt-1">
+                    {origin || 'Your origin'} → {destination || 'Your destination'}
+                  </h2>
+
+                  <p className="text-sm text-[#333333]/60 mt-2">
+                    Your personalized transition plan starts here.
+                  </p>
+                <div className="grid grid-cols-3 gap-3 mt-5">
+
+                <div>
+                <label className="block text-xs font-semibold text-[#333333]/60 mb-1">
+                   Moving From
+                </label>
+
+                <input
+                  type="text"
+                  value={origin}
+                  onChange={(e) => setOrigin(e.target.value)}
+                  placeholder="e.g. Mumbai"
+                  className="w-full rounded-lg border border-[#E5E5E5] px-3 py-2 text-sm outline-none focus:border-[#26c485] focus:ring-1 focus:ring-[#26c485]"
+                  />
+                </div>
+
+                <div>
+                <label className="block text-xs font-semibold text-[#333333]/60 mb-1">
+                  Moving To
+                </label>
+
+                <input
+                  type="text"
+                  value={destination}
+                  onChange={(e) => setDestination(e.target.value)}
+                  placeholder="e.g. Dubai"
+                  className="w-full rounded-lg border border-[#E5E5E5] px-3 py-2 text-sm outline-none focus:border-[#26c485] focus:ring-1 focus:ring-[#26c485]"
+                  />
+                </div>
+
+                <div>
+                <label className="block text-xs font-semibold text-[#333333]/60 mb-1">
+                  Relocation Date
+                </label>
+
+                <input
+                type="date"
+                value={relocationDate}
+               onChange={(e) => setRelocationDate(e.target.value)}
+              className="w-full rounded-lg border border-[#E5E5E5] px-3 py-2 text-sm outline-none focus:border-[#26c485] focus:ring-1 focus:ring-[#26c485]"
+                />
+              </div>
+
+              </div>
+
+                </div>
+
+                {/* Readiness */}
+
+                <div className="bg-[#26c485]/5 border border-[#26c485]/20 rounded-xl p-6">
+
+                  <div className="flex items-center justify-between mb-4">
+
+                    <div>
+
+                      <p className="text-sm text-[#333333]/60">
+                        Relocation Readiness
+                      </p>
+
+                      <p className="text-4xl font-bold text-[#26c485]">
+                        72%
+                      </p>
+
+                    </div>
+
+                    <div className="text-5xl">
+                      🌍
+                    </div>
+
+                  </div>
+
+                  <div className="w-full bg-white rounded-full h-3">
+
+                    <div
+                      className="bg-[#26c485] h-3 rounded-full"
+                      style={{ width: '72%' }}
+                    />
+
+                  </div>
+
+                </div>
+
+                {/* Relocation Categories */}
+
+                <div className="grid grid-cols-2 gap-4">
+
+                  {[
+                    {
+                      label: '📄 Documents',
+                      value: 80,
+                    },
+                    {
+                      label: '🏠 Housing',
+                      value: 60,
+                    },
+                    {
+                      label: '💼 Career',
+                      value: 55,
+                    },
+                    {
+                      label: '💰 Finances',
+                      value: 70,
+                    },
+                    {
+                      label: '👥 Community',
+                      value: 30,
+                    },
+                    {
+                      label: '🏥 Healthcare',
+                      value: 75,
+                    },
+                  ].map((item) => (
+
+                    <div
+                      key={item.label}
+                      className="border border-[#F0F0F0] rounded-lg p-4"
+                    >
+
+                      <div className="flex justify-between mb-2">
+
+                        <span className="text-sm font-medium text-[#333333]">
+                          {item.label}
+                        </span>
+
+                        <span className="text-sm font-semibold text-[#26c485]">
+                          {item.value}%
+                        </span>
+
+                      </div>
+
+                      <div className="w-full bg-[#F5F5F5] rounded-full h-2">
+
+                        <div
+                          className="bg-[#26c485] h-2 rounded-full"
+                          style={{
+                            width: `${item.value}%`,
+                          }}
+                        />
+
+                      </div>
+
+                    </div>
+
+                  ))}
+
+                </div>
+
+                {/* AI Priorities */}
+
+                <div className="border border-[#F0F0F0] rounded-xl p-6">
+
+                  <h3 className="text-lg font-bold text-[#333333] mb-4">
+                    🎯 AI Priorities
+                  </h3>
+
+                  <div className="space-y-4">
+
+                    <div className="flex gap-3">
+                      <span>1️⃣</span>
+
+                      <div>
+                        <p className="font-medium text-[#333333]">
+                          Explore housing options
+                        </p>
+
+                        <p className="text-xs text-[#333333]/50">
+                          Find areas that fit your budget and commute.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <span>2️⃣</span>
+
+                      <div>
+                        <p className="font-medium text-[#333333]">
+                          Review career opportunities
+                        </p>
+
+                        <p className="text-xs text-[#333333]/50">
+                          Compare local, remote and freelance options.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <span>3️⃣</span>
+
+                      <div>
+                        <p className="font-medium text-[#333333]">
+                          Check work eligibility
+                        </p>
+
+                        <p className="text-xs text-[#333333]/50">
+                          Understand whether an EOR pathway may be required.
+                        </p>
+                      </div>
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            )}
+
+            {/* ============================== */}
+            {/* CAREER & INCOME */}
+            {/* ============================== */}
+
             {activeTab === 'career' && (
-              <JobMatcherTab 
+
+              <JobMatcherTab
                 onProfileParsed={handleProfileParsed}
               />
+
             )}
 
-            {activeTab === 'tax' && (
-              <div className="p-6">
-                <div className="bg-[#26c485]/5 border border-[#26c485]/20 rounded-lg p-8 text-center">
-                  <h2 className="text-2xl font-bold text-[#333333] mb-2">⚖️ Tax Safe-Zone</h2>
-                  <p className="text-[#333333]/60 mb-4">
-                    Compare tax implications, cost of living, schools, and housing for your destination
-                  </p>
-                  <p className="text-sm text-[#333333]/50 mt-4">Select a job from the Career tab to unlock this feature</p>
-                </div>
-              </div>
-            )}
+            {/* ============================== */}
+            {/* LIFE SETUP */}
+            {/* ============================== */}
 
-            {activeTab === 'portfolio' && (
+            {activeTab === 'life' && (
+
               <div className="p-6">
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-8 text-center">
-                  <h2 className="text-2xl font-bold text-[#333333] mb-2">💼 Portfolio Builder</h2>
-                  <p className="text-[#333333]/60 mb-4">
-                    Create a professional portfolio optimized for remote hiring
+
+                <div className="bg-[#26c485]/5 border border-[#26c485]/20 rounded-xl p-8">
+
+                  <h2 className="text-2xl font-bold text-[#333333] mb-2">
+                    🏠 Life Setup
+                  </h2>
+
+                  <p className="text-[#333333]/60 mb-6">
+                    Everything you need to settle into your new country.
                   </p>
-                  {parsedProfile ? (
-                    <div className="mt-6 p-4 bg-white rounded-lg border border-purple-200 animate-slide-in">
-                      <p className="text-sm text-[#333333] mb-3">
-                        Ready to build your portfolio! You'll get:
+
+                  <div className="grid grid-cols-2 gap-4">
+
+                    <div className="bg-white rounded-lg p-4 border">
+                      <div className="font-medium">
+                        🏠 Housing
+                      </div>
+
+                      <p className="text-xs text-gray-500 mt-1">
+                        Neighborhoods, rent and commute
                       </p>
-                      <ul className="text-xs text-[#333333]/60 space-y-1 text-left">
-                        <li>✅ Professional headline and summary</li>
-                        <li>✅ Keyword-optimized skills section</li>
-                        <li>✅ Project portfolio with impact stories</li>
-                        <li>✅ Export as PDF or shareable link</li>
-                      </ul>
                     </div>
-                  ) : (
-                    <p className="text-sm text-[#333333]/50 mt-4">Upload your resume first to build your portfolio</p>
-                  )}
+
+                    <div className="bg-white rounded-lg p-4 border">
+                      <div className="font-medium">
+                        🏥 Healthcare
+                      </div>
+
+                      <p className="text-xs text-gray-500 mt-1">
+                        Hospitals, clinics and insurance
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-4 border">
+                      <div className="font-medium">
+                        🏦 Banking
+                      </div>
+
+                      <p className="text-xs text-gray-500 mt-1">
+                        Local banking and financial setup
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-4 border">
+                      <div className="font-medium">
+                        🎓 Education
+                      </div>
+
+                      <p className="text-xs text-gray-500 mt-1">
+                        Schools and family services
+                      </p>
+                    </div>
+
+                  </div>
+
                 </div>
+
               </div>
+
             )}
+
+            {/* ============================== */}
+            {/* COMMUNITY */}
+            {/* ============================== */}
+
+            {activeTab === 'community' && (
+
+              <div className="p-6">
+
+                <div className="bg-[#26c485]/5 border border-[#26c485]/20 rounded-xl p-8">
+
+                  <h2 className="text-2xl font-bold text-[#333333] mb-2">
+                    👥 Find Your Community
+                  </h2>
+
+                  <p className="text-[#333333]/60 mb-6">
+                    Rebuild your professional and social network in your new country.
+                  </p>
+
+                  <div className="space-y-3">
+
+                    <div className="bg-white rounded-lg p-4 border">
+                      <div className="font-medium">
+                        💼 Professional Communities
+                      </div>
+
+                      <p className="text-xs text-gray-500 mt-1">
+                        Connect with people in your industry.
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-4 border">
+                      <div className="font-medium">
+                        🌍 Expat Communities
+                      </div>
+
+                      <p className="text-xs text-gray-500 mt-1">
+                        Meet people who have made a similar move.
+                      </p>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-4 border">
+                      <div className="font-medium">
+                        ❤️ Women & Family Communities
+                      </div>
+
+                      <p className="text-xs text-gray-500 mt-1">
+                        Find relevant local groups and activities.
+                      </p>
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            )}
+
           </div>
+
         </div>
+
       </div>
+
     </div>
   )
 }
