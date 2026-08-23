@@ -6,6 +6,10 @@ import {
   TrendingUp,
   FileText,
   Loader2,
+  Search,
+  ArrowLeftRight,
+  Compass,
+  ListChecks,
 } from 'lucide-react';
 import { chatWithGroq } from '../services/chatService';
 
@@ -14,6 +18,13 @@ interface SidebarProps {
   onSendMessage: (message: string) => void;
   onQuickAction: (action: 'jobs' | 'tax' | 'resume') => void;
 }
+
+const QUICK_START_PROMPTS = [
+  { icon: Search, label: 'Find roles for my background' },
+  { icon: ArrowLeftRight, label: 'Compare local vs remote vs freelance' },
+  { icon: Compass, label: 'Analyze my career options' },
+  { icon: ListChecks, label: 'Find my skill gaps' },
+];
 
 const Sidebar: React.FC<SidebarProps> = ({
   messages,
@@ -27,7 +38,6 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to latest message
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({
       behavior: 'smooth',
@@ -39,12 +49,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, [allMessages]);
 
   // Send chat message to Groq
-  const handleSendMessage = async () => {
-    if (!inputValue.trim() || isLoading) return;
+  const sendPrompt = async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return;
 
-    const messageText = inputValue.trim();
-
-    // Add user's message immediately
     const userMsg: CopilotMessage = {
       id: Date.now().toString(),
       role: 'user',
@@ -53,34 +60,18 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
 
     setAllMessages((prev) => [...prev, userMsg]);
-
-    // Notify parent
     onSendMessage(messageText);
-
-    // Clear input
     setInputValue('');
-
-    // Show loading state
     setIsLoading(true);
 
     try {
-      // Build conversation history
       const conversationHistory = allMessages.map((msg) => ({
         role: msg.role,
         content: msg.content,
       }));
 
-      console.log('📤 Sending message to Groq:', messageText);
+      const aiResponse = await chatWithGroq(messageText, conversationHistory);
 
-      // Call backend → Groq
-      const aiResponse = await chatWithGroq(
-        messageText,
-        conversationHistory
-      );
-
-      console.log('📥 Groq response received');
-
-      // Add AI response
       const aiMsg: CopilotMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -92,7 +83,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     } catch (error) {
       console.error('❌ Chat failed:', error);
 
-      // Show friendly error in chat
       const errorMsg: CopilotMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -103,13 +93,12 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       setAllMessages((prev) => [...prev, errorMsg]);
     } finally {
-      // IMPORTANT: Always stop loading
       setIsLoading(false);
     }
   };
 
-  // Enter = send
-  // Shift + Enter = new line
+  const handleSendMessage = () => sendPrompt(inputValue.trim());
+
   const handleKeyPress = (
     e: React.KeyboardEvent<HTMLInputElement>
   ) => {
@@ -119,64 +108,44 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Quick actions
   const quickActions = [
-    {
-      id: 'jobs',
-      icon: Briefcase,
-      label: '💼 Show Remote Jobs',
-      action: 'jobs' as const,
-    },
-    {
-      id: 'tax',
-      icon: TrendingUp,
-      label: '📊 Check Tax Safe-Zone',
-      action: 'tax' as const,
-    },
-    {
-      id: 'resume',
-      icon: FileText,
-      label: '📄 Adapt My Resume',
-      action: 'resume' as const,
-    },
+    { id: 'jobs', icon: Briefcase, label: 'Show Remote Jobs', action: 'jobs' as const },
+    { id: 'tax', icon: TrendingUp, label: 'Check Tax Safe-Zone', action: 'tax' as const },
+    { id: 'resume', icon: FileText, label: 'Adapt My Resume', action: 'resume' as const },
   ];
 
   return (
-    <div className="flex flex-col h-full bg-white border-r border-[#F5F5F5]">
-
+    <div
+      className="flex flex-col h-full border-r"
+      style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border-warm)' }}
+    >
       {/* ============================= */}
       {/* QUICK ACTIONS */}
       {/* ============================= */}
 
-      <div className="p-4 border-b border-[#F5F5F5] bg-gradient-to-b from-white to-[#F5F5F5]">
-
-        <p className="text-xs font-semibold text-[#333333]/50 mb-3 uppercase tracking-wider">
+      <div className="p-4 border-b" style={{ borderColor: 'var(--border-warm)' }}>
+        <p
+          className="text-xs font-semibold mb-3 uppercase tracking-wider"
+          style={{ color: 'var(--text-muted)' }}
+        >
           Quick Actions
         </p>
 
         <div className="flex flex-col gap-2">
-
           {quickActions.map((action) => {
             const Icon = action.icon;
 
             return (
               <button
                 key={action.id}
-                onClick={() =>
-                  onQuickAction(action.action)
-                }
-                className="group relative w-full rounded-lg border border-[#26c485]/30 bg-white px-3 py-2.5 text-xs font-medium text-[#26c485] transition-all duration-200 hover:border-[#26c485] hover:bg-[#26c485]/5 hover:shadow-soft active:scale-98 flex items-center gap-2"
+                onClick={() => onQuickAction(action.action)}
+                className="group relative w-full rounded-md border border-[#26c485]/30 bg-[var(--surface)] px-3 py-2.5 text-xs font-medium text-[var(--primary-dark)] transition-all duration-200 hover:border-[#26c485] hover:bg-[#26c485]/5 hover:shadow-soft active:scale-98 flex items-center gap-2"
               >
-                <Icon
-                  size={14}
-                  className="group-hover:scale-110 transition-transform"
-                />
-
+                <Icon size={14} aria-hidden="true" className="group-hover:scale-110 transition-transform" />
                 <span>{action.label}</span>
               </button>
             );
           })}
-
         </div>
       </div>
 
@@ -184,167 +153,133 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* CHAT MESSAGES */}
       {/* ============================= */}
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
-
+      <div className="flex-1 overflow-y-auto p-4 space-y-4" style={{ backgroundColor: 'var(--surface)' }}>
         {allMessages.length === 0 ? (
-
-          <div className="flex items-center justify-center h-full">
-
-            <div className="text-center max-w-xs">
-
-              <div className="w-12 h-12 bg-[#26c485]/10 rounded-full flex items-center justify-center mx-auto mb-3">
-
-                <svg
-                  className="w-6 h-6 text-[#26c485]"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5z" />
-                </svg>
-
-              </div>
-
-              <p className="text-sm text-[#333333]/60 font-medium">
-                Start a conversation
+          <div className="flex h-full flex-col justify-center gap-6 px-1 py-6">
+            <div>
+              <h2
+                className="text-xl font-bold leading-snug"
+                style={{ color: 'var(--text-strong)' }}
+              >
+                Your career doesn't have to relocate backwards.
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed" style={{ color: 'var(--text-body)' }}>
+                Tell me where you're moving and what you've done so far. I'll help you find the
+                best path forward.
               </p>
-
-              <p className="text-xs text-[#333333]/40 mt-1">
-                Click a quick action or ask me anything about remote careers
-              </p>
-
             </div>
 
+            <div className="flex flex-col gap-2">
+              {QUICK_START_PROMPTS.map((prompt) => {
+                const Icon = prompt.icon;
+                return (
+                  <button
+                    key={prompt.label}
+                    type="button"
+                    onClick={() => sendPrompt(prompt.label)}
+                    disabled={isLoading}
+                    className="flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-left text-sm font-medium transition-all hover:shadow-soft disabled:cursor-not-allowed disabled:opacity-50"
+                    style={{ borderColor: 'var(--border-warm)', color: 'var(--text-strong)' }}
+                  >
+                    <Icon size={16} aria-hidden="true" className="shrink-0 text-[var(--primary-dark)]" />
+                    <span>{prompt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-
         ) : (
-
           allMessages.map((msg) => (
-
             <div
               key={msg.id}
               className={`flex ${
-                msg.role === 'user'
-                  ? 'justify-end'
-                  : 'justify-start'
+                msg.role === 'user' ? 'justify-end' : 'justify-start'
               } animate-slide-in`}
             >
-
               <div
-                className={`max-w-xs rounded-lg px-4 py-3 text-sm leading-relaxed ${
+                className={`max-w-xs rounded-md px-4 py-3 text-sm leading-relaxed ${
                   msg.role === 'user'
                     ? 'bg-[#26c485] text-white rounded-br-none shadow-soft'
-                    : 'bg-[#F5F5F5] text-[#333333] rounded-bl-none border border-[#e0e0e0]'
+                    : 'rounded-bl-none border'
                 }`}
+                style={
+                  msg.role === 'assistant'
+                    ? { backgroundColor: 'var(--surface-2)', color: 'var(--text-strong)', borderColor: 'var(--border-warm)' }
+                    : undefined
+                }
               >
-
-                <p className="break-words whitespace-pre-wrap">
-                  {msg.content}
-                </p>
-
+                <p className="break-words whitespace-pre-wrap">{msg.content}</p>
                 <p
-                  className={`mt-2 text-xs ${
-                    msg.role === 'user'
-                      ? 'text-white/70'
-                      : 'text-[#333333]/40'
-                  }`}
+                  className={`mt-2 text-xs ${msg.role === 'user' ? 'text-white/70' : ''}`}
+                  style={msg.role === 'assistant' ? { color: 'var(--text-muted)' } : undefined}
                 >
-                  {new Date(
-                    msg.timestamp
-                  ).toLocaleTimeString([], {
+                  {new Date(msg.timestamp).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
                   })}
                 </p>
-
               </div>
-
             </div>
-
           ))
-
         )}
 
-        {/* ============================= */}
-        {/* LOADING */}
-        {/* ============================= */}
-
         {isLoading && (
-
           <div className="flex justify-start animate-fade-in">
-
-            <div className="bg-[#F5F5F5] rounded-lg rounded-bl-none px-4 py-3 flex items-center gap-2 border border-[#e0e0e0]">
-
-              <Loader2
-                size={16}
-                className="animate-spin text-[#26c485]"
-              />
-
-              <span className="text-sm text-[#333333]/60">
-                Groq is thinking...
+            <div
+              className="flex items-center gap-2 rounded-md rounded-bl-none border px-4 py-3"
+              style={{ backgroundColor: 'var(--surface-2)', borderColor: 'var(--border-warm)' }}
+            >
+              <Loader2 size={16} className="animate-spin text-[var(--primary-dark)]" aria-hidden="true" />
+              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                Thinking...
               </span>
-
             </div>
-
           </div>
-
         )}
 
         <div ref={messagesEndRef} />
-
       </div>
 
       {/* ============================= */}
       {/* CHAT INPUT */}
       {/* ============================= */}
 
-      <div className="border-t border-[#F5F5F5] p-4 bg-gradient-to-b from-white to-[#F5F5F5]">
-
+      <div className="border-t p-4" style={{ borderColor: 'var(--border-warm)' }}>
         <div className="flex gap-2">
-
           <input
             type="text"
             value={inputValue}
-            onChange={(e) =>
-              setInputValue(e.target.value)
-            }
+            onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyPress}
             placeholder="Ask PivotPartner..."
             disabled={isLoading}
-            className="flex-1 rounded-lg border border-[#F5F5F5] bg-white px-4 py-2.5 text-sm outline-none transition-all duration-200 placeholder-[#333333]/40 focus:border-[#26c485] focus:ring-2 focus:ring-[#26c485] focus:ring-opacity-20 disabled:opacity-50 disabled:cursor-not-allowed shadow-soft"
+            className="flex-1 rounded-md border px-4 py-2.5 text-sm outline-none transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-soft"
+            style={{
+              borderColor: 'var(--border-warm)',
+              backgroundColor: 'var(--surface)',
+              color: 'var(--text-strong)',
+            }}
           />
 
           <button
             onClick={handleSendMessage}
-            disabled={
-              isLoading || !inputValue.trim()
-            }
-            className="rounded-lg bg-[#26c485] p-2.5 text-white transition-all duration-200 hover:bg-[#1a8b5a] hover:shadow-soft active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-            title={
-              isLoading
-                ? 'Waiting for response...'
-                : 'Send message (Enter)'
-            }
+            disabled={isLoading || !inputValue.trim()}
+            className="rounded-md bg-[#26c485] p-2.5 text-white transition-all duration-200 hover:bg-[#1a8b5a] hover:shadow-soft active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={isLoading ? 'Waiting for response...' : 'Send message (Enter)'}
+            aria-label="Send message"
           >
-
             {isLoading ? (
-              <Loader2
-                size={18}
-                className="animate-spin"
-              />
+              <Loader2 size={18} className="animate-spin" aria-hidden="true" />
             ) : (
-              <Send size={18} />
+              <Send size={18} aria-hidden="true" />
             )}
-
           </button>
-
         </div>
 
-        <p className="text-xs text-[#333333]/40 mt-2">
+        <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
           Press Enter to send, Shift+Enter for new line
         </p>
-
       </div>
-
     </div>
   );
 };

@@ -10,7 +10,7 @@ interface SkillAnalysisProps {
 }
 
 function getMatchColorClasses(score: number): { text: string; bg: string; bar: string } {
-  if (score > 80) return { text: 'text-[#26c485]', bg: 'bg-[#26c485]/10', bar: 'bg-[#26c485]' };
+  if (score > 80) return { text: 'text-[var(--primary-dark)]', bg: 'bg-[var(--primary-light)]', bar: 'bg-[var(--primary)]' };
   if (score >= 60) return { text: 'text-amber-500', bg: 'bg-amber-50', bar: 'bg-amber-500' };
   return { text: 'text-red-500', bg: 'bg-red-50', bar: 'bg-red-500' };
 }
@@ -50,13 +50,13 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
       <div className={`flex items-center justify-between rounded-lg p-4 ${overallColors.bg}`}>
         <div className="flex items-center gap-2">
           <TrendingUp className={overallColors.text} size={20} />
-          <span className="font-medium text-gray-700">Overall market fit</span>
+          <span className="font-medium text-[var(--text-dark)]">Overall market fit</span>
         </div>
         <span className={`text-2xl font-semibold ${overallColors.text}`}>{matchScore}%</span>
       </div>
 
       <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">Your Skills</h2>
+        <h2 className="text-lg font-semibold text-[var(--text-dark)] mb-3">Your Skills</h2>
         <div className="flex flex-wrap gap-2">
           {profile.skills.map((skill) => (
             <span
@@ -67,13 +67,13 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
             </span>
           ))}
           {profile.skills.length === 0 && (
-            <p className="text-sm text-gray-500">No skills detected yet.</p>
+            <p className="text-sm text-[var(--text-light)]">No skills detected yet.</p>
           )}
         </div>
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-[var(--text-dark)] mb-3 flex items-center gap-2">
           <AlertCircle className="text-amber-500" size={20} />
           Skill Gaps
         </h2>
@@ -82,23 +82,23 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
             {skillGaps.map((gap) => (
               <div
                 key={gap.skill.name}
-                className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+                className="rounded-lg border border-[var(--border-light)] bg-[var(--surface)] p-4 shadow-sm"
               >
-                <p className="font-medium text-gray-800">{gap.skill.name}</p>
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="font-medium text-[var(--text-dark)]">{gap.skill.name}</p>
+                <p className="mt-1 text-sm text-[var(--text-light)]">
                   Est. {gap.estimatedTimeWeeks} {gap.estimatedTimeWeeks === 1 ? 'week' : 'weeks'} to close
                 </p>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-500">No major skill gaps — you're well-positioned for your top match.</p>
+          <p className="text-sm text-[var(--text-light)]">No major skill gaps — you're well-positioned for your top match.</p>
         )}
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
-          <BookOpen className="text-[#26c485]" size={20} />
+        <h2 className="text-lg font-semibold text-[var(--text-dark)] mb-3 flex items-center gap-2">
+          <BookOpen className="text-[var(--primary-dark)]" size={20} />
           Recommended Courses
         </h2>
         {recommendedCourses.length > 0 ? (
@@ -106,52 +106,52 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
             {recommendedCourses.map((course) => (
               <div
                 key={course.id}
-                className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+                className="rounded-lg border border-[var(--border-light)] bg-[var(--surface)] p-4 shadow-sm"
               >
-                <p className="font-medium text-gray-800">{course.title}</p>
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="font-medium text-[var(--text-dark)]">{course.title}</p>
+                <p className="mt-1 text-sm text-[var(--text-light)]">
                   {course.platform} · {course.durationWeeks} weeks · {course.cost}
                 </p>
-                <p className="mt-1 text-xs text-[#26c485]">Skill gained: {course.skillGained}</p>
+                <p className="mt-1 text-xs text-[var(--primary-dark)]">Skill gained: {course.skillGained}</p>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-500">No course recommendations right now.</p>
+          <p className="text-sm text-[var(--text-light)]">No course recommendations right now.</p>
         )}
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">Career Paths</h2>
+        <h2 className="text-lg font-semibold text-[var(--text-dark)] mb-3">Career Paths</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {careerPaths.map((path) => {
             const colors = getMatchColorClasses(path.matchPercentage);
             return (
               <div
                 key={path.id}
-                className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm flex flex-col gap-3"
+                className="rounded-lg border border-[var(--border-light)] bg-[var(--surface)] p-5 shadow-sm flex flex-col gap-3"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className="font-semibold text-gray-800">{path.title}</h3>
+                  <h3 className="font-semibold text-[var(--text-dark)]">{path.title}</h3>
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${colors.bg} ${colors.text}`}>
                     {path.matchPercentage}%
                   </span>
                 </div>
 
-                <div className="h-2 w-full rounded-full bg-gray-100">
+                <div className="h-2 w-full rounded-full bg-[var(--bg-light)]">
                   <div
                     className={`h-2 rounded-full ${colors.bar}`}
                     style={{ width: `${Math.min(100, Math.max(0, path.matchPercentage))}%` }}
                   />
                 </div>
 
-                <p className="text-sm text-gray-600">{path.whyItFits}</p>
+                <p className="text-sm text-[var(--text-light)]">{path.whyItFits}</p>
 
                 <div className="mt-auto space-y-1 text-sm">
-                  <p className="text-gray-700">
+                  <p className="text-[var(--text-dark)]">
                     <span className="font-medium">Salary:</span> {path.salaryRange}
                   </p>
-                  <p className="text-gray-700">
+                  <p className="text-[var(--text-dark)]">
                     <span className="font-medium">Timeline:</span> {formatTimeline(path.skillGaps)}
                   </p>
                 </div>
@@ -159,7 +159,7 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
             );
           })}
           {careerPaths.length === 0 && (
-            <p className="text-sm text-gray-500">No career paths available yet.</p>
+            <p className="text-sm text-[var(--text-light)]">No career paths available yet.</p>
           )}
         </div>
       </section>

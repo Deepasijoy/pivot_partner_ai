@@ -146,7 +146,7 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
 
       {parsedProfile && !isLoading && (
         <div className="mt-4 rounded-md border border-[#26c485]/30 bg-[#26c485]/5 p-4">
-          <p className="text-sm font-medium text-[#26c485]">Resume parsed successfully</p>
+          <p className="text-sm font-medium text-[var(--primary-dark)]">Resume parsed successfully</p>
           <p className="mt-1 text-xs text-gray-500">
             {parsedProfile.yearsExperience} years experience · {parsedProfile.industries.join(', ')}
           </p>

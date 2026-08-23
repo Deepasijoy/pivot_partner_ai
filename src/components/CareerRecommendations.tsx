@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { ResumeProfile, CareerRecommendation } from '../types';
+import type { ResumeProfile } from '../types';
 import { getCareerRecommendations } from '../services/recommendationService';
 import { TrendingUp, Zap, Globe, Award } from 'lucide-react';
 
@@ -20,20 +20,20 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
   return (
     <div className="space-y-4">
       {/* Header with Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="bg-gradient-to-br from-[#26c485]/10 to-[#26c485]/5 rounded-lg p-4 border border-[#26c485]/20">
           <div className="flex items-center gap-2 mb-1">
-            <TrendingUp size={16} className="text-[#26c485]" />
-            <span className="text-xs font-semibold text-[#333333]/60 uppercase">Avg Match</span>
+            <TrendingUp size={16} className="text-[var(--primary-dark)]" />
+            <span className="text-xs font-semibold text-[var(--text-light)] uppercase">Avg Match</span>
           </div>
-          <p className="text-2xl font-bold text-[#26c485]">
+          <p className="text-2xl font-bold text-[var(--primary-dark)]">
             {Math.round(recommendations.reduce((sum, r) => sum + r.matchScore, 0) / recommendations.length)}%
           </p>
         </div>
         <div className="bg-gradient-to-br from-blue-50 to-blue-5 rounded-lg p-4 border border-blue-200">
           <div className="flex items-center gap-2 mb-1">
             <Award size={16} className="text-blue-600" />
-            <span className="text-xs font-semibold text-[#333333]/60 uppercase">Opportunities</span>
+            <span className="text-xs font-semibold text-[var(--text-light)] uppercase">Opportunities</span>
           </div>
           <p className="text-2xl font-bold text-blue-600">
             {recommendations.reduce((sum, r) => sum + r.opportunityCount, 0)}+
@@ -42,7 +42,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
         <div className="bg-gradient-to-br from-purple-50 to-purple-5 rounded-lg p-4 border border-purple-200">
           <div className="flex items-center gap-2 mb-1">
             <Zap size={16} className="text-purple-600" />
-            <span className="text-xs font-semibold text-[#333333]/60 uppercase">Matches</span>
+            <span className="text-xs font-semibold text-[var(--text-light)] uppercase">Matches</span>
           </div>
           <p className="text-2xl font-bold text-purple-600">{recommendations.length}</p>
         </div>
@@ -65,8 +65,8 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
               <div className="p-4">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1">
-                    <h3 className="text-lg font-bold text-[#333333] mb-1">{rec.title}</h3>
-                    <p className="text-sm text-[#333333]/60">{rec.reason}</p>
+                    <h3 className="text-lg font-bold text-[var(--text-dark)] mb-1">{rec.title}</h3>
+                    <p className="text-sm text-[var(--text-light)]">{rec.reason}</p>
                   </div>
                   <div className={`px-3 py-1.5 rounded-full text-sm font-bold ${colors.badge} whitespace-nowrap ml-3`}>
                     {rec.matchScore}%
@@ -76,12 +76,12 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
                 {/* Quick Stats */}
                 <div className="flex gap-4 mb-4 text-sm">
                   <div className="flex items-center gap-1">
-                    <Globe size={14} className="text-[#26c485]" />
-                    <span className="text-[#333333]/70">{rec.opportunityCount}+ roles</span>
+                    <Globe size={14} className="text-[var(--primary-dark)]" />
+                    <span className="text-[var(--text-light)]">{rec.opportunityCount}+ roles</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Award size={14} className="text-[#26c485]" />
-                    <span className="text-[#333333]/70">{rec.salaryRange}</span>
+                    <Award size={14} className="text-[var(--primary-dark)]" />
+                    <span className="text-[var(--text-light)]">{rec.salaryRange}</span>
                   </div>
                 </div>
 
@@ -96,7 +96,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
                     </span>
                   ))}
                   {rec.matchedSkills && rec.matchedSkills.length > 3 && (
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-[#F5F5F5] text-[#333333] border border-[#e0e0e0]">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--bg-light)] text-[var(--text-dark)] border border-[var(--border-light)]">
                       +{rec.matchedSkills.length - 3}
                     </span>
                   )}
@@ -105,11 +105,11 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
 
               {/* Expandable Section */}
               {isExpanded && (
-                <div className="border-t border-current/10 p-4 bg-white/50 space-y-4 animate-slide-in">
+                <div className="border-t border-current/10 p-4 bg-[var(--surface-2)] space-y-4 animate-slide-in">
                   {/* Missing Skills */}
                   {rec.missingSkills && rec.missingSkills.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-[#333333]/60 uppercase mb-2 tracking-wider">Skills to Develop</p>
+                      <p className="text-xs font-semibold text-[var(--text-light)] uppercase mb-2 tracking-wider">Skills to Develop</p>
                       <div className="flex flex-wrap gap-2">
                         {rec.missingSkills.slice(0, 5).map((skill) => (
                           <span
@@ -120,7 +120,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
                           </span>
                         ))}
                         {rec.missingSkills.length > 5 && (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-[#F5F5F5] text-[#333333] border border-[#e0e0e0]">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--bg-light)] text-[var(--text-dark)] border border-[var(--border-light)]">
                             +{rec.missingSkills.length - 5}
                           </span>
                         )}
@@ -130,19 +130,19 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
 
                   {/* Recommended Action */}
                   <div className="p-3 bg-[#26c485]/10 border border-[#26c485]/30 rounded-lg">
-                    <p className="text-xs font-semibold text-[#26c485] uppercase tracking-wider mb-1">Next Step</p>
-                    <p className="text-sm font-medium text-[#333333]">{rec.recommendedAction}</p>
+                    <p className="text-xs font-semibold text-[var(--primary-dark)] uppercase tracking-wider mb-1">Next Step</p>
+                    <p className="text-sm font-medium text-[var(--text-dark)]">{rec.recommendedAction}</p>
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="grid grid-cols-3 gap-2 pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
                     <button className="px-3 py-2 rounded-lg bg-[#26c485] text-white text-xs font-medium transition-all hover:bg-[#1a8b5a] active:scale-95">
                       Explore
                     </button>
-                    <button className="px-3 py-2 rounded-lg bg-white border border-[#26c485] text-[#26c485] text-xs font-medium transition-all hover:bg-[#26c485]/5 active:scale-95">
+                    <button className="px-3 py-2 rounded-lg bg-[var(--surface)] border border-[var(--primary-dark)] text-[var(--primary-dark)] text-xs font-medium transition-all hover:bg-[#26c485]/5 active:scale-95">
                       Analyze Gap
                     </button>
-                    <button className="px-3 py-2 rounded-lg bg-white border border-[#26c485] text-[#26c485] text-xs font-medium transition-all hover:bg-[#26c485]/5 active:scale-95">
+                    <button className="px-3 py-2 rounded-lg bg-[var(--surface)] border border-[var(--primary-dark)] text-[var(--primary-dark)] text-xs font-medium transition-all hover:bg-[#26c485]/5 active:scale-95">
                       Ask AI
                     </button>
                   </div>
@@ -151,7 +151,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
 
               {/* Expand Indicator */}
               {!isExpanded && (
-                <div className="px-4 py-2 bg-white/50 border-t border-current/10 flex items-center justify-center text-xs text-[#333333]/50 group-hover:text-[#333333]">
+                <div className="px-4 py-2 bg-[var(--surface-2)] border-t border-current/10 flex items-center justify-center text-xs text-[var(--text-light)] group-hover:text-[var(--text-dark)]">
                   Click to expand
                 </div>
               )}
@@ -162,7 +162,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile }
 
       {/* Footer */}
       <div className="mt-6 p-4 bg-[#26c485]/5 border border-[#26c485]/20 rounded-lg text-center">
-        <p className="text-sm text-[#333333]/60">
+        <p className="text-sm text-[var(--text-light)]">
           💡 <span className="font-medium">Tip:</span> Click any recommendation to see skills to develop and next steps
         </p>
       </div>
