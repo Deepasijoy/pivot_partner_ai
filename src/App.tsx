@@ -1,9 +1,12 @@
-import { useState } from 'react'
-import type { ResumeProfile, CopilotMessage } from './types'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
+import type { ResumeProfile, CopilotMessage, AppTab, PillarTab } from './types'
 import Sidebar from './components/SideBar'
 import TabNavigation from './components/TabNavigation'
 import JobMatcherTab from './components/JobMatcherTab'
 import ThemeToggle from './components/ThemeToggle'
+import DashboardHome from './components/DashboardHome'
+import { useGroqChat } from './hooks/useGroqChat'
 import {
   FileCheck,
   Home,
@@ -19,26 +22,38 @@ import {
 } from 'lucide-react'
 import './styles/theme.css'
 
-type ActiveTab = 'relocation' | 'career' | 'life' | 'community'
-
 function App() {
-  const [activeTab, setActiveTab] =
-    useState<ActiveTab>('relocation')
+  const [activeTab, setActiveTab] = useState<AppTab>('dashboard')
 
   const [parsedProfile, setParsedProfile] =
     useState<ResumeProfile | null>(null)
-  const [origin, setOrigin] = useState('Mumbai')
-  const [destination, setDestination] = useState('Accra')
+  const [origin, setOrigin] = useState('')
+  const [destination, setDestination] = useState('')
   const [relocationDate, setRelocationDate] = useState('')
 
-  // Empty by default so Sidebar shows the concise welcome state + quick-start
-  // actions instead of a scripted intake message.
-  const [messages, setMessages] = useState<CopilotMessage[]>([])
+  // Single source of truth for the conversation — shared by the sidebar
+  // chat panel and the dashboard's contextual AI input, both backed by the
+  // same existing Groq /api/chat call in chatService.ts.
+  const { messages, isLoading, sendPrompt, pushMessage } = useGroqChat()
 
-  // Chat is handled by Sidebar → chatService → backend → Groq
-  const handleSendMessage = (_content: string) => {
-    // Sidebar handles the actual chat.
-  }
+  // If the visitor arrived from the landing page's hero AI input, it hands
+  // off the prompt they typed via router state — send it once on mount so
+  // the "AI interaction" on the landing page is a real handoff into this
+  // same conversation, not a decorative dead end. A plain /app visit has no
+  // location.state, so this is a no-op for the normal app entry point.
+  const location = useLocation()
+  const initialPromptSent = useRef(false)
+
+  useEffect(() => {
+    const state = location.state as { initialPrompt?: string } | null
+    if (state?.initialPrompt && !initialPromptSent.current) {
+      initialPromptSent.current = true
+      sendPrompt(state.initialPrompt)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const goToPillar = (tab: PillarTab) => setActiveTab(tab)
 
   // Quick actions from Sidebar
   const handleQuickAction = (
@@ -54,7 +69,7 @@ function App() {
         timestamp: new Date(),
       }
 
-      setMessages((prev) => [...prev, userMsg])
+      pushMessage(userMsg)
 
       setTimeout(() => {
         const aiMsg: CopilotMessage = {
@@ -85,7 +100,7 @@ Let's get started!`,
           timestamp: new Date(),
         }
 
-        setMessages((prev) => [...prev, aiMsg])
+        pushMessage(aiMsg)
       }, 800)
     }
 
@@ -99,7 +114,7 @@ Let's get started!`,
         timestamp: new Date(),
       }
 
-      setMessages((prev) => [...prev, userMsg])
+      pushMessage(userMsg)
 
       setTimeout(() => {
         const aiMsg: CopilotMessage = {
@@ -115,7 +130,7 @@ Tell me your destination and expected income to start the analysis.`,
           timestamp: new Date(),
         }
 
-        setMessages((prev) => [...prev, aiMsg])
+        pushMessage(aiMsg)
       }, 800)
     }
 
@@ -129,7 +144,7 @@ Tell me your destination and expected income to start the analysis.`,
         timestamp: new Date(),
       }
 
-      setMessages((prev) => [...prev, userMsg])
+      pushMessage(userMsg)
 
       setTimeout(() => {
         const aiMsg: CopilotMessage = {
@@ -159,7 +174,7 @@ Let's make your experience travel with you!`,
           timestamp: new Date(),
         }
 
-        setMessages((prev) => [...prev, aiMsg])
+        pushMessage(aiMsg)
       }, 800)
     }
   }
@@ -206,7 +221,7 @@ Your career can travel with you.`,
       timestamp: new Date(),
     }
 
-    setMessages((prev) => [...prev, aiMsg])
+    pushMessage(aiMsg)
   }
 
   const relocationCategories = [
@@ -225,7 +240,12 @@ Your career can travel with you.`,
         className="border-b px-6 py-4 shadow-soft flex items-center justify-between"
         style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border-warm)' }}
       >
-        <div className="max-w-full">
+        <button
+          type="button"
+          onClick={() => setActiveTab('dashboard')}
+          className="max-w-full text-left"
+          aria-label="Go to dashboard"
+        >
           <div className="flex items-baseline gap-3 mb-1">
             <h1 className="text-3xl font-bold text-[var(--primary)] tracking-tight">
               PivotPartner AI
@@ -239,27 +259,48 @@ Your career can travel with you.`,
           <p className="text-sm font-medium" style={{ color: 'var(--text-muted)' }}>
             Your life and career can travel with you
           </p>
-        </div>
+        </button>
 
         <ThemeToggle />
       </div>
 
-      {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <div className="w-2/5 border-r flex flex-col overflow-hidden" style={{ borderColor: 'var(--border-warm)' }}>
+      {/* Main Content — stacks on mobile/tablet, side-by-side from lg up */}
+      <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
+        {/* Sidebar (AI copilot) */}
+        <div
+          className="flex h-[45vh] flex-col overflow-hidden border-b lg:h-auto lg:w-2/5 lg:border-b-0 lg:border-r"
+          style={{ borderColor: 'var(--border-warm)' }}
+        >
           <Sidebar
             messages={messages}
-            onSendMessage={handleSendMessage}
+            isLoading={isLoading}
+            onSendPrompt={sendPrompt}
             onQuickAction={handleQuickAction}
           />
         </div>
 
-        {/* Dashboard */}
-        <div className="w-3/5 flex flex-col overflow-hidden" style={{ backgroundColor: 'var(--bg-app)' }}>
-          <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />
+        {/* Dashboard / pillar content */}
+        <div className="flex flex-1 flex-col overflow-hidden lg:w-3/5" style={{ backgroundColor: 'var(--bg-app)' }}>
+          {activeTab !== 'dashboard' && (
+            <TabNavigation activeTab={activeTab} onTabChange={goToPillar} />
+          )}
 
           <div className="flex-1 overflow-y-auto">
+            {/* ============================== */}
+            {/* MAIN DASHBOARD (default view) */}
+            {/* ============================== */}
+
+            {activeTab === 'dashboard' && (
+              <DashboardHome
+                origin={origin}
+                destination={destination}
+                parsedProfile={parsedProfile}
+                isLoading={isLoading}
+                onNavigate={goToPillar}
+                onSendPrompt={sendPrompt}
+              />
+            )}
+
             {/* ============================== */}
             {/* RELOCATION */}
             {/* ============================== */}

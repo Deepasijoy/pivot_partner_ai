@@ -1,10 +1,37 @@
-import React from 'react'
+import React, { Suspense, lazy } from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import LandingPage from './pages/LandingPage.tsx'
 import './styles/theme.css'
+
+// Code-split the authenticated app and auth placeholders out of the
+// landing page's initial bundle — visitors hitting "/" for SEO/marketing
+// shouldn't have to download the full dashboard.
+const App = lazy(() => import('./App.tsx'))
+const AuthPlaceholder = lazy(() => import('./pages/AuthPlaceholder.tsx'))
+
+function RouteFallback() {
+  return (
+    <div
+      className="flex min-h-screen items-center justify-center text-sm"
+      style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-muted)' }}
+    >
+      Loading…
+    </div>
+  )
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <BrowserRouter>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/app" element={<App />} />
+          <Route path="/login" element={<AuthPlaceholder mode="login" />} />
+          <Route path="/get-started" element={<AuthPlaceholder mode="signup" />} />
+        </Routes>
+      </Suspense>
+    </BrowserRouter>
   </React.StrictMode>,
 )

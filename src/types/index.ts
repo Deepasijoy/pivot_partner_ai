@@ -139,3 +139,9 @@ export interface CopilotMessage {
   content: string;
   timestamp: Date;
 }
+
+// The app's top-level navigation state: the four pillars, plus the
+// dashboard/home overview that sits above them. Shared between App.tsx
+// and TabNavigation.tsx so both stay in sync on the same union.
+export type AppTab = 'dashboard' | 'relocation' | 'career' | 'life' | 'community';
+export type PillarTab = Exclude<AppTab, 'dashboard'>;

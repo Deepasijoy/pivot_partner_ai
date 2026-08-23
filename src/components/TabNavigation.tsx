@@ -1,7 +1,6 @@
 import React from 'react';
 import { Globe, Briefcase, Home, Users } from 'lucide-react';
-
-type Tab = 'relocation' | 'career' | 'life' | 'community';
+import type { PillarTab as Tab } from '../types';
 
 interface TabNavigationProps {
   activeTab: Tab;
