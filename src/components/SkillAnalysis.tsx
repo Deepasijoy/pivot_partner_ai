@@ -15,6 +15,16 @@ function getMatchColorClasses(score: number): { text: string; bg: string; bar: s
   return { text: 'text-red-500', bg: 'bg-red-50', bar: 'bg-red-500' };
 }
 
+// The "Overall market fit" banner pairs its icon/percentage with a label
+// that must stay readable in both themes, so — unlike the self-contained
+// badges above, which keep a matched static bg+text pair — it needs a
+// dark-aware accent color rather than a static light background.
+function getBannerAccent(score: number): string {
+  if (score > 80) return 'var(--primary-dark)';
+  if (score >= 60) return 'var(--status-warning)';
+  return 'var(--status-danger)';
+}
+
 function formatTimeline(skillGaps: SkillGap[]): string {
   if (skillGaps.length === 0) return 'Ready now';
   const totalWeeks = skillGaps.reduce((sum, gap) => sum + gap.estimatedTimeWeeks, 0);
@@ -43,16 +53,16 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile]);
 
-  const overallColors = getMatchColorClasses(matchScore);
+  const bannerAccent = getBannerAccent(matchScore);
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4 sm:p-6 space-y-8">
-      <div className={`flex items-center justify-between rounded-lg p-4 ${overallColors.bg}`}>
+      <div className="flex items-center justify-between rounded-lg p-4" style={{ backgroundColor: 'var(--surface-2)' }}>
         <div className="flex items-center gap-2">
-          <TrendingUp className={overallColors.text} size={20} />
+          <TrendingUp style={{ color: bannerAccent }} size={20} />
           <span className="font-medium text-[var(--text-dark)]">Overall market fit</span>
         </div>
-        <span className={`text-2xl font-semibold ${overallColors.text}`}>{matchScore}%</span>
+        <span className="text-2xl font-semibold" style={{ color: bannerAccent }}>{matchScore}%</span>
       </div>
 
       <section>

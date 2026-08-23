@@ -1,20 +1,28 @@
 import React, { useState } from 'react';
-import type { ResumeProfile } from '../types';
+import type { ResumeProfile, WorkModel } from '../types';
 import ResumeUploader from './ResumeUploader';
 import CareerProfile from './CareerProfile';
 import CareerRecommendations from './CareerRecommendations';
 import SkillAnalysis from './SkillAnalysis';
+import WorkModelSelector from './WorkModelSelector';
 
 interface JobMatcherTabProps {
   onProfileParsed?: (profile: ResumeProfile) => void;
+  onSendPrompt?: (text: string) => void;
 }
 
-const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed }) => {
+const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPrompt }) => {
   const [parsedProfile, setParsedProfile] = useState<ResumeProfile | null>(null);
+  const [workModels, setWorkModels] = useState<WorkModel[]>([]);
 
   const handleProfileParsed = (profile: ResumeProfile) => {
     setParsedProfile(profile);
     onProfileParsed?.(profile);
+  };
+
+  const handleReset = () => {
+    setParsedProfile(null);
+    setWorkModels([]);
   };
 
   return (
@@ -38,19 +46,31 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed }) => {
         </div>
       )}
 
-      {parsedProfile && (
+      {/* Work model preference — collected once per resume, before results */}
+      {parsedProfile && workModels.length === 0 && <WorkModelSelector onContinue={setWorkModels} />}
+
+      {parsedProfile && workModels.length > 0 && (
         <>
           {/* Tier 1 — hero: overall career profile */}
           <section>
             <CareerProfile profile={parsedProfile} />
           </section>
 
-          {/* Tier 2 — recommended paths */}
+          {/* Tier 2 — recommended paths, filtered by work model preference */}
           <section>
-            <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-strong)' }}>
-              Recommended Paths
-            </h3>
-            <CareerRecommendations profile={parsedProfile} />
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold" style={{ color: 'var(--text-strong)' }}>
+                Recommended Paths
+              </h3>
+              <button
+                onClick={() => setWorkModels([])}
+                className="text-xs font-medium underline"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                Change work preferences
+              </button>
+            </div>
+            <CareerRecommendations profile={parsedProfile} workModels={workModels} onSendPrompt={onSendPrompt} />
           </section>
 
           {/* Tier 3 — skill gap detail */}
@@ -62,7 +82,7 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed }) => {
           </section>
 
           <button
-            onClick={() => setParsedProfile(null)}
+            onClick={handleReset}
             className="rounded-md px-4 py-2 text-sm font-medium transition-colors"
             style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-strong)' }}
           >

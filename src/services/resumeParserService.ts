@@ -54,9 +54,97 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Free-text phrasing that commonly shows up in resumes but doesn't literally
+// match a taxonomy skill name. Every value here must be an exact taxonomy
+// skill name — this only maps wording onto existing skills, it never invents
+// new ones. Adapted from server/utils/skillNormalization.ts's ALIAS_MAP.
+const SKILL_ALIASES: Record<string, string> = {
+  'financial reporting': 'Financial Analysis',
+  'data reporting': 'Data Analysis',
+  'stakeholder coordination': 'Stakeholder Management',
+  spreadsheets: 'Excel',
+  spreadsheet: 'Excel',
+  'ms excel': 'Excel',
+  'microsoft excel': 'Excel',
+  js: 'JavaScript',
+  'javascript programming': 'JavaScript',
+  'react.js': 'React',
+  reactjs: 'React',
+  node: 'Node.js',
+  nodejs: 'Node.js',
+  ml: 'Machine Learning',
+  'artificial intelligence': 'Machine Learning',
+  'aws cloud': 'AWS',
+  'amazon web services': 'AWS',
+  'cloud computing': 'Cloud Architecture',
+  'agile methodology': 'Agile/Scrum',
+  scrum: 'Agile/Scrum',
+  'project coordination': 'Project Management',
+  'project scoping': 'Project Management',
+  'project delivery': 'Project Management',
+  'search engine optimization': 'SEO',
+  'client relationship management': 'Customer Success',
+  'crm software': 'CRM (Salesforce/HubSpot)',
+  salesforce: 'CRM (Salesforce/HubSpot)',
+  hubspot: 'CRM (Salesforce/HubSpot)',
+  'people management': 'HR Management',
+  'talent acquisition': 'Recruitment',
+  hiring: 'Recruitment',
+  'budget planning': 'Budgeting',
+  'financial forecasting': 'Forecasting',
+  presenting: 'Public Speaking',
+  'sql database': 'SQL',
+  databases: 'SQL',
+  'power bi dashboards': 'Power BI',
+  'data visualization': 'Tableau',
+};
+
+// Whole-word/whole-phrase substring check: the match must not be immediately
+// preceded or followed by another letter/digit, so canonical names like
+// "Excel" don't fire on "excellent" or "SQL" on "MySQL".
+function containsTerm(lowerText: string, term: string): boolean {
+  const lowerTerm = term.toLowerCase();
+  if (!lowerTerm) return false;
+
+  const isWordChar = (ch: string) => /[a-z0-9]/i.test(ch);
+  let fromIndex = 0;
+  while (true) {
+    const idx = lowerText.indexOf(lowerTerm, fromIndex);
+    if (idx === -1) return false;
+
+    const before = idx === 0 ? '' : lowerText[idx - 1];
+    const after = idx + lowerTerm.length >= lowerText.length ? '' : lowerText[idx + lowerTerm.length];
+    if (!isWordChar(before) && !isWordChar(after)) {
+      return true;
+    }
+    fromIndex = idx + 1;
+  }
+}
+
 function detectSkills(lowerText: string): Skill[] {
   const allSkills = [...mockSkillTaxonomy.technical, ...mockSkillTaxonomy.business];
-  return allSkills.filter((skill) => lowerText.includes(skill.name.toLowerCase()));
+  const matched: Skill[] = [];
+  const seen = new Set<string>();
+
+  for (const skill of allSkills) {
+    if (containsTerm(lowerText, skill.name)) {
+      seen.add(skill.name);
+      matched.push(skill);
+    }
+  }
+
+  for (const [alias, canonicalName] of Object.entries(SKILL_ALIASES)) {
+    if (seen.has(canonicalName)) continue;
+    if (!containsTerm(lowerText, alias)) continue;
+
+    const skill = allSkills.find((candidate) => candidate.name === canonicalName);
+    if (skill) {
+      seen.add(skill.name);
+      matched.push(skill);
+    }
+  }
+
+  return matched;
 }
 
 function detectYearsExperience(text: string): number {

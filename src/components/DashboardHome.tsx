@@ -1,16 +1,31 @@
 import React, { useState } from 'react';
-import type { ResumeProfile, PillarTab } from '../types';
-import { Sparkles, ArrowUpRight, ChevronRight, Globe, Briefcase, Home, Users } from 'lucide-react';
+import type { ResumeProfile, PillarTab, PreferredWorkModel } from '../types';
+import { Sparkles, ArrowUpRight, ChevronRight, Globe, Briefcase, Home, Users, MapPin } from 'lucide-react';
 import { QUICK_START_PROMPTS } from '../data/quickStartPrompts';
 
 interface DashboardHomeProps {
   origin: string;
   destination: string;
+  relocationDate: string;
+  workSituation: string;
+  preferredWorkModel: PreferredWorkModel | '';
+  onOriginChange: (value: string) => void;
+  onDestinationChange: (value: string) => void;
+  onRelocationDateChange: (value: string) => void;
+  onWorkSituationChange: (value: string) => void;
+  onPreferredWorkModelChange: (value: PreferredWorkModel) => void;
   parsedProfile: ResumeProfile | null;
   isLoading: boolean;
   onNavigate: (tab: PillarTab) => void;
   onSendPrompt: (text: string) => void;
 }
+
+const WORK_MODEL_OPTIONS: { id: PreferredWorkModel; label: string }[] = [
+  { id: 'local', label: 'Local' },
+  { id: 'remote', label: 'Remote' },
+  { id: 'freelance', label: 'Freelance' },
+  { id: 'not_sure', label: 'Not sure' },
+];
 
 interface JourneyStage {
   phase: string;
@@ -90,6 +105,14 @@ function getNextBestAction(origin: string, destination: string, parsedProfile: R
 const DashboardHome: React.FC<DashboardHomeProps> = ({
   origin,
   destination,
+  relocationDate,
+  workSituation,
+  preferredWorkModel,
+  onOriginChange,
+  onDestinationChange,
+  onRelocationDateChange,
+  onWorkSituationChange,
+  onPreferredWorkModelChange,
   parsedProfile,
   isLoading,
   onNavigate,
@@ -173,6 +196,102 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
           ))}
         </div>
       </form>
+
+      {/* Your Move — compact relocation profile, feeds the Journey status
+          and Next Best Action below, and is stored in the same App-level
+          state as everything else here (single source of truth). */}
+      <div className="mb-12 rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+        <div className="flex items-center gap-2 mb-4">
+          <MapPin size={15} style={{ color: 'var(--primary-dark)' }} aria-hidden="true" />
+          <h2 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+            Your Move
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="dashboard-origin" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
+              Origin
+            </label>
+            <input
+              id="dashboard-origin"
+              type="text"
+              value={origin}
+              onChange={(e) => onOriginChange(e.target.value)}
+              placeholder="e.g. Mumbai"
+              className="text-sm"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="dashboard-destination" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
+              Destination
+            </label>
+            <input
+              id="dashboard-destination"
+              type="text"
+              value={destination}
+              onChange={(e) => onDestinationChange(e.target.value)}
+              placeholder="e.g. Dubai"
+              className="text-sm"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="dashboard-move-timing" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
+              Move Timing
+            </label>
+            <input
+              id="dashboard-move-timing"
+              type="date"
+              value={relocationDate}
+              onChange={(e) => onRelocationDateChange(e.target.value)}
+              className="text-sm"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="dashboard-work-situation" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
+              Current Work Situation
+            </label>
+            <input
+              id="dashboard-work-situation"
+              type="text"
+              value={workSituation}
+              onChange={(e) => onWorkSituationChange(e.target.value)}
+              placeholder="e.g. Employed full-time, need to transition"
+              className="text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <p className="block text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+            Preferred Work Model
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {WORK_MODEL_OPTIONS.map((option) => {
+              const isSelected = preferredWorkModel === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => onPreferredWorkModelChange(option.id)}
+                  aria-pressed={isSelected}
+                  className="rounded-md border px-3 py-1.5 text-xs font-medium transition-colors"
+                  style={
+                    isSelected
+                      ? { borderColor: 'var(--primary-dark)', backgroundColor: 'var(--primary-light)', color: 'var(--primary-dark)' }
+                      : { borderColor: 'var(--border-warm)', color: 'var(--text-body)' }
+                  }
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
 
       {/* Journey */}
       <div className="mb-12">

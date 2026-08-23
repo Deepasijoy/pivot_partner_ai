@@ -17,6 +17,7 @@ interface SidebarProps {
   isLoading: boolean;
   onSendPrompt: (message: string) => void;
   onQuickAction: (action: 'jobs' | 'tax' | 'resume') => void;
+  onOpenResumeParser: () => void;
 }
 
 const QUICK_START_PROMPTS = [
@@ -31,6 +32,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   isLoading,
   onSendPrompt,
   onQuickAction,
+  onOpenResumeParser,
 }) => {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -166,6 +168,18 @@ const Sidebar: React.FC<SidebarProps> = ({
                 }
               >
                 <p className="break-words whitespace-pre-wrap">{msg.content}</p>
+
+                {msg.role === 'assistant' && msg.action === 'open-resume-parser' && (
+                  <button
+                    type="button"
+                    onClick={onOpenResumeParser}
+                    className="mt-3 flex items-center gap-1.5 rounded-md bg-[#26c485] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1a8b5a]"
+                  >
+                    <FileText size={13} aria-hidden="true" />
+                    Analyze my resume
+                  </button>
+                )}
+
                 <p
                   className={`mt-2 text-xs ${msg.role === 'user' ? 'text-white/70' : ''}`}
                   style={msg.role === 'assistant' ? { color: 'var(--text-muted)' } : undefined}

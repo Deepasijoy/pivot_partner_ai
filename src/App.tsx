@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import type { ResumeProfile, CopilotMessage, AppTab, PillarTab } from './types'
+import type { ResumeProfile, CopilotMessage, AppTab, PillarTab, PreferredWorkModel } from './types'
 import Sidebar from './components/SideBar'
 import TabNavigation from './components/TabNavigation'
 import JobMatcherTab from './components/JobMatcherTab'
 import ThemeToggle from './components/ThemeToggle'
 import DashboardHome from './components/DashboardHome'
 import { useGroqChat } from './hooks/useGroqChat'
+import { isActionableJobIntent } from './utils/jobIntentDetection'
 import {
   FileCheck,
   Home,
@@ -30,6 +31,11 @@ function App() {
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
   const [relocationDate, setRelocationDate] = useState('')
+  // Relocation-profile fields restored to the dashboard (previously only
+  // origin/destination/relocationDate existed, on the Relocation tab).
+  // Same state mechanism as the fields above — not a separate profile system.
+  const [workSituation, setWorkSituation] = useState('')
+  const [preferredWorkModel, setPreferredWorkModel] = useState<PreferredWorkModel | ''>('')
 
   // Single source of truth for the conversation — shared by the sidebar
   // chat panel and the dashboard's contextual AI input, both backed by the
@@ -54,6 +60,40 @@ function App() {
   }, [])
 
   const goToPillar = (tab: PillarTab) => setActiveTab(tab)
+
+  // Intercepts prompts from the sidebar chat and the dashboard's contextual
+  // AI input before they reach Groq. Actionable job-seeking intent (see
+  // jobIntentDetection.ts) short-circuits the normal AI round-trip and
+  // guides the user straight to the existing resume-upload/parser flow —
+  // reusing the same pushMessage + activeTab mechanism handleQuickAction
+  // already uses below, rather than introducing new state or routing.
+  // Once a resume is already on file, fall through to the normal answer.
+  const handleUserPrompt = (text: string) => {
+    if (!parsedProfile && isActionableJobIntent(text)) {
+      const userMsg: CopilotMessage = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: text,
+        timestamp: new Date(),
+      }
+      pushMessage(userMsg)
+
+      setTimeout(() => {
+        const aiMsg: CopilotMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: "To help me match opportunities to your experience, let's start with your resume.",
+          timestamp: new Date(),
+          action: 'open-resume-parser',
+        }
+        pushMessage(aiMsg)
+      }, 500)
+
+      return
+    }
+
+    sendPrompt(text)
+  }
 
   // Quick actions from Sidebar
   const handleQuickAction = (
@@ -274,16 +314,15 @@ Your career can travel with you.`,
           <Sidebar
             messages={messages}
             isLoading={isLoading}
-            onSendPrompt={sendPrompt}
+            onSendPrompt={handleUserPrompt}
             onQuickAction={handleQuickAction}
+            onOpenResumeParser={() => goToPillar('career')}
           />
         </div>
 
         {/* Dashboard / pillar content */}
         <div className="flex flex-1 flex-col overflow-hidden lg:w-3/5" style={{ backgroundColor: 'var(--bg-app)' }}>
-          {activeTab !== 'dashboard' && (
-            <TabNavigation activeTab={activeTab} onTabChange={goToPillar} />
-          )}
+          <TabNavigation activeTab={activeTab as PillarTab} onTabChange={goToPillar} />
 
           <div className="flex-1 overflow-y-auto">
             {/* ============================== */}
@@ -294,10 +333,18 @@ Your career can travel with you.`,
               <DashboardHome
                 origin={origin}
                 destination={destination}
+                relocationDate={relocationDate}
+                workSituation={workSituation}
+                preferredWorkModel={preferredWorkModel}
+                onOriginChange={setOrigin}
+                onDestinationChange={setDestination}
+                onRelocationDateChange={setRelocationDate}
+                onWorkSituationChange={setWorkSituation}
+                onPreferredWorkModelChange={setPreferredWorkModel}
                 parsedProfile={parsedProfile}
                 isLoading={isLoading}
                 onNavigate={goToPillar}
-                onSendPrompt={sendPrompt}
+                onSendPrompt={handleUserPrompt}
               />
             )}
 
@@ -444,7 +491,7 @@ Your career can travel with you.`,
             {/* ============================== */}
 
             {activeTab === 'career' && (
-              <JobMatcherTab onProfileParsed={handleProfileParsed} />
+              <JobMatcherTab onProfileParsed={handleProfileParsed} onSendPrompt={sendPrompt} />
             )}
 
             {/* ============================== */}

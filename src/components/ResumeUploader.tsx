@@ -78,11 +78,11 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
         role="button"
         tabIndex={0}
         className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 sm:p-10 text-center cursor-pointer transition-colors ${
-          isDragActive ? 'border-[#26c485] bg-[#26c485]/5' : 'border-gray-300 hover:border-[#26c485]'
+          isDragActive ? 'border-[#26c485] bg-[#26c485]/5' : 'border-[var(--border-warm)] hover:border-[#26c485]'
         }`}
       >
         <svg
-          className="h-8 w-8 text-gray-400"
+          className="h-8 w-8 text-[var(--text-muted)]"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -94,8 +94,8 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
             d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 8.25 12 3.75m0 0L7.5 8.25M12 3.75V15"
           />
         </svg>
-        <p className="text-gray-600 font-medium">Drag resume here or click to upload</p>
-        <p className="text-sm text-gray-400">PDF, DOC, DOCX, or TXT</p>
+        <p className="text-[var(--text-dark)] font-medium">Drag resume here or click to upload</p>
+        <p className="text-sm text-[var(--text-muted)]">PDF, DOC, DOCX, or TXT</p>
         <input
           ref={fileInputRef}
           type="file"
@@ -106,10 +106,10 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
       </div>
 
       {file && (
-        <div className="mt-4 flex items-center justify-between rounded-md bg-gray-50 px-4 py-3">
+        <div className="mt-4 flex items-center justify-between rounded-md bg-[var(--surface-2)] px-4 py-3">
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-gray-800">{file.name}</p>
-            <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+            <p className="truncate text-sm font-medium text-[var(--text-dark)]">{file.name}</p>
+            <p className="text-xs text-[var(--text-light)]">{formatFileSize(file.size)}</p>
           </div>
         </div>
       )}
@@ -125,19 +125,20 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
       )}
 
       {isLoading && (
-        <div className="mt-4 flex items-center gap-3 text-gray-600">
+        <div className="mt-4 flex items-center gap-3 text-[var(--text-light)]">
           <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#26c485] border-t-transparent" />
           <span className="text-sm">Analyzing resume...</span>
         </div>
       )}
 
       {error && !isLoading && (
-        <div className="mt-4 rounded-md bg-red-50 px-4 py-3">
-          <p className="text-sm text-red-600">{error}</p>
+        <div className="mt-4 rounded-md border border-red-500/20 bg-red-500/5 px-4 py-3">
+          <p className="text-sm" style={{ color: 'var(--status-danger)' }}>{error}</p>
           <button
             type="button"
             onClick={handleParse}
-            className="mt-2 text-sm font-medium text-red-700 underline hover:text-red-800"
+            className="mt-2 text-sm font-medium underline transition-opacity hover:opacity-80"
+            style={{ color: 'var(--status-danger)' }}
           >
             Retry
           </button>
@@ -147,7 +148,7 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
       {parsedProfile && !isLoading && (
         <div className="mt-4 rounded-md border border-[#26c485]/30 bg-[#26c485]/5 p-4">
           <p className="text-sm font-medium text-[var(--primary-dark)]">Resume parsed successfully</p>
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="mt-1 text-xs text-[var(--text-light)]">
             {parsedProfile.yearsExperience} years experience · {parsedProfile.industries.join(', ')}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">

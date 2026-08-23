@@ -121,9 +121,19 @@ export interface CommunityPost {
   category: string;
 }
 
+// How the user wants to work — collected once per session via the
+// work-model preference step in Career & Income (JobMatcherTab).
+export type WorkModel = 'local' | 'remote' | 'freelance';
+
+// Same options plus "not sure yet" — used by the dashboard's relocation
+// profile, where the user may not have decided on a work model.
+export type PreferredWorkModel = WorkModel | 'not_sure';
+
 export interface CareerRecommendation {
   id: string;
   title: string;
+  company: string;
+  workModel: WorkModel;
   matchScore: number;
   reason: string;
   salaryRange: string;
@@ -138,6 +148,10 @@ export interface CopilotMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  // Optional deterministic call-to-action attached to an assistant message
+  // (e.g. a button guiding the user to the resume parser). Absent for
+  // ordinary Groq-answered messages.
+  action?: 'open-resume-parser';
 }
 
 // The app's top-level navigation state: the four pillars, plus the

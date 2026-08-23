@@ -197,6 +197,8 @@ export function getCareerRecommendations(
     return {
       id: `rec_${job.id}`,
       title: `Remote ${job.title}`,
+      company: job.company,
+      workModel: 'remote',
       matchScore: score.matchScore,
       reason: buildReasons(profile, score),
       salaryRange: job.salaryRange,

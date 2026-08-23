@@ -36,6 +36,14 @@
   --accent-indigo-soft: #818cf8;
   --accent-indigo-tint: #eef0fd;
 
+  /* --- Status accents: match-score / readiness indicators (borders,
+     icons, percentages) — deliberately NOT used as full backgrounds,
+     since a solid status background can't stay both light-mode-readable
+     and dark-mode-readable at once. --- */
+  --status-success: #15803d;
+  --status-warning: #b45309;
+  --status-danger: #b91c1c;
+
   /* --- Warm neutrals (app shell) --- */
   --bg-app: #fbfaf7;
   --surface: #ffffff;
@@ -81,6 +89,10 @@
   --accent-indigo-soft: #818cf8;
   --accent-indigo-tint: #211f3d;
 
+  --status-success: #4ade80;
+  --status-warning: #fbbf24;
+  --status-danger: #f87171;
+
   --bg-app: #17140f;
   --surface: #211c15;
   --surface-2: #2a241b;
@@ -119,6 +131,10 @@
     --accent-indigo: #818cf8;
     --accent-indigo-strong: #a5aefb;
     --accent-indigo-tint: #211f3d;
+
+    --status-success: #4ade80;
+    --status-warning: #fbbf24;
+    --status-danger: #f87171;
 
     --bg-app: #17140f;
     --surface: #211c15;
