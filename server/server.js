@@ -14,6 +14,9 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY
 const GROQ_API_URL =
   'https://api.groq.com/openai/v1/chat/completions'
 
+const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID
+const ADZUNA_API_KEY = process.env.ADZUNA_API_KEY
+
 const MODEL = 'openai/gpt-oss-20b'
 
 // ============================================
@@ -306,6 +309,74 @@ app.get('/api/health', (req, res) => {
     provider: 'Groq',
     model: MODEL,
   })
+})
+// ============================================
+// ADZUNA JOB SEARCH
+// ============================================
+
+app.get('/api/jobs', async (req, res) => {
+  try {
+    const {
+      what = 'jobs',
+      where = '',
+      country,
+      page = '1',
+      results_per_page = '20',
+    } = req.query
+
+    if (!ADZUNA_APP_ID || !ADZUNA_API_KEY) {
+      return res.status(500).json({
+        error: 'Adzuna API credentials are not configured',
+      })
+    }
+
+    // Country is supplied by the caller (resolved client-side from the
+    // user's relocation destination) — never hard-coded here. Adzuna's
+    // country codes are 2-letter, so a caller must resolve the destination
+    // to one before calling this route.
+    if (!country || typeof country !== 'string' || !/^[a-zA-Z]{2}$/.test(country)) {
+      return res.status(400).json({
+        error: 'A valid two-letter country code is required, e.g. ?country=gb',
+      })
+    }
+
+    const countryCode = country.toLowerCase()
+
+    const params = new URLSearchParams({
+      app_id: ADZUNA_APP_ID,
+      app_key: ADZUNA_API_KEY,
+      results_per_page: String(results_per_page),
+      what: String(what),
+    })
+
+    if (where) {
+      params.set('where', String(where))
+    }
+
+    const url =
+      `https://api.adzuna.com/v1/api/jobs/${countryCode}/search/${page}?${params.toString()}`
+
+    console.log(`🔎 Adzuna job search: ${what} (${countryCode})`)
+
+    const response = await fetch(url)
+    const data = await response.json()
+
+    if (!response.ok) {
+      console.error('❌ Adzuna API Error:', data)
+
+      return res.status(response.status).json({
+        error: 'Adzuna job search failed',
+      })
+    }
+
+    res.json(data)
+  } catch (error) {
+    console.error('❌ Job search error:', error)
+
+    res.status(500).json({
+      error: error.message || 'Job search failed',
+    })
+  }
 })
 
 // ============================================

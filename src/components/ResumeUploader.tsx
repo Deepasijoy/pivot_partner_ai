@@ -95,11 +95,11 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
           />
         </svg>
         <p className="text-[var(--text-dark)] font-medium">Drag resume here or click to upload</p>
-        <p className="text-sm text-[var(--text-muted)]">PDF, DOC, DOCX, or TXT</p>
+        <p className="text-sm text-[var(--text-muted)]">PDF only</p>
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.doc,.docx,.txt"
+          accept=".pdf"
           className="hidden"
           onChange={handleFileInput}
         />

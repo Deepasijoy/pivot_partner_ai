@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { ResumeProfile, WorkModel, CareerRecommendation, Skill } from '../types';
+import type { ResumeProfile, WorkModel, CareerRecommendation, Skill, JobOpportunity } from '../types';
 import { getCareerRecommendations } from '../services/recommendationService';
 import { matchFreelanceForUser } from '../services/matchingService';
 import { calculateSkillGaps } from '../services/skillAnalysisService';
@@ -9,6 +9,17 @@ interface CareerRecommendationsProps {
   profile: ResumeProfile;
   workModels: WorkModel[];
   onSendPrompt?: (text: string) => void;
+  // The canonical job-fetch result owned by JobMatcherTab (live Adzuna
+  // jobs, or the tagged mock fallback — never a mix of both). Optional so
+  // this component still works if a parent hasn't wired it in yet —
+  // getCareerRecommendations() falls back to its own mock default in that
+  // case, exactly as it already did before this change.
+  jobs?: JobOpportunity[];
+  // Whether `jobs` above is live Adzuna data or the mock fallback — drives
+  // the "Live opportunities" / "Example opportunities" label on the Remote
+  // section, which is the only section these jobs actually feed.
+  jobSource?: 'live' | 'fallback';
+  jobReason?: string;
 }
 
 function hasSkillByName(skills: Skill[], name: string): boolean {
@@ -50,10 +61,19 @@ function getMatchColor(score: number) {
   return { accent: 'var(--status-danger)', badge: 'bg-red-100 text-red-800' };
 }
 
-const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile, workModels, onSendPrompt }) => {
+const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
+  profile,
+  workModels,
+  onSendPrompt,
+  jobs,
+  jobSource,
+  jobReason,
+}) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const remoteRecs = workModels.includes('remote') ? getCareerRecommendations(profile) : [];
+  const remoteRecs = workModels.includes('remote')
+    ? getCareerRecommendations(profile, jobs ? { jobs } : undefined)
+    : [];
   const freelanceRecs = workModels.includes('freelance') ? buildFreelanceRecommendations(profile) : [];
   const allRecs = [...remoteRecs, ...freelanceRecs];
 
@@ -245,9 +265,24 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({ profile, 
 
       {workModels.includes('remote') && (
         <section>
-          <h3 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-            Remote
-          </h3>
+          <div className="mb-3 flex items-center gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              Remote
+            </h3>
+            {jobSource && (
+              <span
+                className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                style={
+                  jobSource === 'live'
+                    ? { backgroundColor: 'var(--primary-light)', color: 'var(--primary-dark)' }
+                    : { backgroundColor: 'var(--surface-2)', color: 'var(--text-muted)' }
+                }
+                title={jobSource === 'fallback' ? jobReason : undefined}
+              >
+                {jobSource === 'live' ? 'Live opportunities' : 'Example opportunities — live search unavailable'}
+              </span>
+            )}
+          </div>
           <div className="space-y-3">{remoteRecs.map(renderCard)}</div>
         </section>
       )}

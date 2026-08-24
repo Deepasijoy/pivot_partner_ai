@@ -491,7 +491,7 @@ Your career can travel with you.`,
             {/* ============================== */}
 
             {activeTab === 'career' && (
-              <JobMatcherTab onProfileParsed={handleProfileParsed} onSendPrompt={sendPrompt} />
+              <JobMatcherTab onProfileParsed={handleProfileParsed} onSendPrompt={sendPrompt} destination={destination} />
             )}
 
             {/* ============================== */}

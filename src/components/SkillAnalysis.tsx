@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { ResumeProfile, SkillGap, CourseRecommendation, CareerPath } from '../types';
+import type { ResumeProfile, SkillGap, CourseRecommendation, CareerPath, JobOpportunity } from '../types';
 import { calculateSkillGaps, recommendCourses } from '../services/skillAnalysisService';
 import { matchJobsForUser, generateCareerPaths } from '../services/matchingService';
 import { AlertCircle, TrendingUp, BookOpen } from 'lucide-react';
@@ -7,6 +7,15 @@ import { AlertCircle, TrendingUp, BookOpen } from 'lucide-react';
 interface SkillAnalysisProps {
   profile: ResumeProfile;
   onCareerPathsGenerated?: (paths: CareerPath[]) => void;
+  // The canonical job-fetch result owned by JobMatcherTab — the same array
+  // CareerRecommendations receives, so both always agree. Optional so this
+  // still works if a parent hasn't wired it in yet — matchJobsForUser()
+  // falls back to its own mock default in that case, exactly as before.
+  jobs?: JobOpportunity[];
+  // Whether `jobs` above is live Adzuna data or the mock fallback — every
+  // section below (match score, skill gaps, career paths) derives from it.
+  jobSource?: 'live' | 'fallback';
+  jobReason?: string;
 }
 
 function getMatchColorClasses(score: number): { text: string; bg: string; bar: string } {
@@ -31,19 +40,26 @@ function formatTimeline(skillGaps: SkillGap[]): string {
   return `~${totalWeeks} weeks to close skill gaps`;
 }
 
-const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGenerated }) => {
+const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGenerated, jobs, jobSource, jobReason }) => {
   const [skillGaps, setSkillGaps] = useState<SkillGap[] | null>(null);
   const [recommendedCourses, setRecommendedCourses] = useState<CourseRecommendation[]>([]);
   const [careerPaths, setCareerPaths] = useState<CareerPath[]>([]);
   const [matchScore, setMatchScore] = useState<number>(0);
 
+  // No independent fetch here anymore — jobs (live-or-fallback, tagged
+  // upstream by JobMatcherTab) arrive as a prop, so this is now a plain
+  // synchronous derivation. Re-runs when the prop updates, e.g. once
+  // JobMatcherTab's own fetch resolves after the initial render.
   useEffect(() => {
-    const matchedJobs = matchJobsForUser(profile.skills);
+    const matchedJobs = matchJobsForUser(profile.skills, jobs);
     const paths = generateCareerPaths(profile.skills, matchedJobs);
     const topJob = matchedJobs[0];
-    const gaps = topJob ? calculateSkillGaps(profile.skills, topJob.requiredSkills) : [];
+    const gaps = topJob
+      ? calculateSkillGaps(profile.skills, topJob.requiredSkills)
+      : [];
     const courses = recommendCourses(gaps);
-    const overallMatchScore = paths[0]?.matchPercentage ?? topJob?.matchScore ?? 0;
+    const overallMatchScore =
+      paths[0]?.matchPercentage ?? topJob?.matchScore ?? 0;
 
     setSkillGaps(gaps);
     setRecommendedCourses(courses);
@@ -51,7 +67,7 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
     setMatchScore(overallMatchScore);
     onCareerPathsGenerated?.(paths);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile]);
+  }, [profile, jobs]);
 
   const bannerAccent = getBannerAccent(matchScore);
 
@@ -61,6 +77,19 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
         <div className="flex items-center gap-2">
           <TrendingUp style={{ color: bannerAccent }} size={20} />
           <span className="font-medium text-[var(--text-dark)]">Overall market fit</span>
+          {jobSource && (
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+              style={
+                jobSource === 'live'
+                  ? { backgroundColor: 'var(--primary-light)', color: 'var(--primary-dark)' }
+                  : { backgroundColor: 'var(--surface)', color: 'var(--text-light)' }
+              }
+              title={jobSource === 'fallback' ? jobReason : undefined}
+            >
+              {jobSource === 'live' ? 'Live opportunities' : 'Example opportunities — live search unavailable'}
+            </span>
+          )}
         </div>
         <span className="text-2xl font-semibold" style={{ color: bannerAccent }}>{matchScore}%</span>
       </div>

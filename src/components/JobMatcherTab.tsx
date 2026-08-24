@@ -1,19 +1,32 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { ResumeProfile, WorkModel } from '../types';
 import ResumeUploader from './ResumeUploader';
 import CareerProfile from './CareerProfile';
 import CareerRecommendations from './CareerRecommendations';
 import SkillAnalysis from './SkillAnalysis';
 import WorkModelSelector from './WorkModelSelector';
+import { resolveDestination, isAdzunaSupportedCountry } from '../services/locationService';
+import { deriveJobQuery } from '../services/jobQueryService';
+import { loadJobOpportunities, type JobFetchResult } from '../services/jobService';
 
 interface JobMatcherTabProps {
   onProfileParsed?: (profile: ResumeProfile) => void;
   onSendPrompt?: (text: string) => void;
+  // Optional for now — App.tsx does not pass this yet (threading the
+  // relocation destination down from App.tsx is a separate, not-yet-scoped
+  // change). When absent, the job fetch below correctly and honestly falls
+  // back to mock jobs, since there is no location to search Adzuna against.
+  destination?: string;
 }
 
-const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPrompt }) => {
+const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPrompt, destination }) => {
   const [parsedProfile, setParsedProfile] = useState<ResumeProfile | null>(null);
   const [workModels, setWorkModels] = useState<WorkModel[]>([]);
+  // The single canonical job-fetch result for this screen. Not yet consumed
+  // by any child component — a later step wires this into
+  // CareerRecommendations and SkillAnalysis so both always agree.
+  const [jobResult, setJobResult] = useState<JobFetchResult | null>(null);
+  const [jobsLoading, setJobsLoading] = useState(false);
 
   const handleProfileParsed = (profile: ResumeProfile) => {
     setParsedProfile(profile);
@@ -23,7 +36,72 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
   const handleReset = () => {
     setParsedProfile(null);
     setWorkModels([]);
+    setJobResult(null);
   };
+
+  // The ONE job fetch for this screen, owned here. Triggered once a profile
+  // exists and the user has chosen a work model — the same point the
+  // results view below renders. Resolves the destination, derives a
+  // profile-driven search query (never a hard-coded title), and loads
+  // live-or-fallback jobs via the single canonical pipeline.
+  useEffect(() => {
+    if (!parsedProfile || workModels.length === 0) {
+      setJobResult(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadJobs = async () => {
+      setJobsLoading(true);
+
+      const location = await resolveDestination(destination ?? '');
+      if (cancelled) return;
+
+      const query = deriveJobQuery(parsedProfile);
+
+      let result: JobFetchResult;
+      if (location.countryCode && !location.isRemote && isAdzunaSupportedCountry(location.countryCode)) {
+        result = await loadJobOpportunities({
+          what: query.primaryQuery,
+          where: location.city,
+          country: location.countryCode,
+        });
+      } else {
+        // No resolved/supported country yet (unresolved, ambiguous, remote,
+        // or outside Adzuna's coverage) — skip the live call rather than
+        // make a request already known to be rejected; loadJobOpportunities
+        // still returns the correctly tagged fallback result.
+        result = await loadJobOpportunities({ what: query.primaryQuery });
+      }
+
+      if (!cancelled) {
+        setJobResult(result);
+        setJobsLoading(false);
+      }
+    };
+
+    loadJobs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [parsedProfile, workModels, destination]);
+
+  // Temporary verification aid for this step — Steps 7-9 will replace this
+  // with real consumption (props into CareerRecommendations/SkillAnalysis,
+  // plus the live/mock UI label). Confirms the single fetch is happening
+  // and what it produced, without rendering anything yet.
+  useEffect(() => {
+    if (jobsLoading) {
+      console.debug('[JobMatcherTab] loading job opportunities…');
+    } else if (jobResult) {
+      console.debug(
+        `[JobMatcherTab] job fetch complete — source: ${jobResult.source}, jobs: ${jobResult.jobs.length}` +
+          (jobResult.reason ? `, reason: ${jobResult.reason}` : '')
+      );
+    }
+  }, [jobResult, jobsLoading]);
 
   return (
     <div className="space-y-8 p-6">
@@ -70,7 +148,14 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
                 Change work preferences
               </button>
             </div>
-            <CareerRecommendations profile={parsedProfile} workModels={workModels} onSendPrompt={onSendPrompt} />
+            <CareerRecommendations
+              profile={parsedProfile}
+              workModels={workModels}
+              onSendPrompt={onSendPrompt}
+              jobs={jobResult?.jobs}
+              jobSource={jobResult?.source}
+              jobReason={jobResult?.reason}
+            />
           </section>
 
           {/* Tier 3 — skill gap detail */}
@@ -78,7 +163,12 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
             className="rounded-lg border p-2 sm:p-4"
             style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface-2)' }}
           >
-            <SkillAnalysis profile={parsedProfile} />
+            <SkillAnalysis
+              profile={parsedProfile}
+              jobs={jobResult?.jobs}
+              jobSource={jobResult?.source}
+              jobReason={jobResult?.reason}
+            />
           </section>
 
           <button

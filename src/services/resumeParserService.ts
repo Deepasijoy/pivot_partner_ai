@@ -1,7 +1,14 @@
 import type { ResumeProfile, Skill } from '../types';
 import { mockSkillTaxonomy } from './mockData';
+// Vite resolves this to the built worker file's URL at build time — no
+// vite.config.ts change needed, `?url` asset imports work out of the box.
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
-const ACCEPTED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.txt'];
+// PDF only — legacy .doc (proprietary binary format) has no reliable
+// client-side extraction library, and .docx/.txt support was dropped from
+// this pass's scope. Uploading anything else is rejected with a clear
+// error rather than attempted.
+const ACCEPTED_EXTENSIONS = ['.pdf'];
 const PARSE_DELAY_MS = 1200;
 
 const INDUSTRY_KEYWORDS: Record<string, string> = {
@@ -21,10 +28,10 @@ const INDUSTRY_KEYWORDS: Record<string, string> = {
 export async function parseResume(file: File): Promise<ResumeProfile> {
   const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
   if (!ACCEPTED_EXTENSIONS.includes(extension)) {
-    throw new Error('Unsupported file type. Please upload a PDF, DOC, DOCX, or TXT file.');
+    throw new Error('Unsupported file type. Please upload a PDF file.');
   }
 
-  const [text] = await Promise.all([readFileAsText(file), delay(PARSE_DELAY_MS)]);
+  const [text] = await Promise.all([extractPdfText(file), delay(PARSE_DELAY_MS)]);
   const lowerText = text.toLowerCase();
 
   const skills = detectSkills(lowerText);
@@ -41,13 +48,32 @@ export async function parseResume(file: File): Promise<ResumeProfile> {
   };
 }
 
-function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-    reader.onerror = () => reject(new Error('Failed to read the resume file.'));
-    reader.readAsText(file);
-  });
+// Extracts the real text layer from a PDF, page by page in document order,
+// via pdfjs-dist — replaces the previous FileReader.readAsText() call,
+// which read PDFs as raw binary-decoded-as-text and produced unreadable
+// content. Everything downstream (detectSkills, detectIndustries, etc.) is
+// unchanged — it just now receives the resume's actual text.
+async function extractPdfText(file: File): Promise<string> {
+  // Dynamically imported so the (fairly large) pdf.js library only loads
+  // into the browser when a user actually uploads a resume, not on initial
+  // app load.
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  const pageTexts: string[] = [];
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item) => ('str' in item ? item.str : ''))
+      .join(' ');
+    pageTexts.push(pageText);
+  }
+
+  return pageTexts.join('\n');
 }
 
 function delay(ms: number): Promise<void> {
