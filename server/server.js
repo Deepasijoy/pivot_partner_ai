@@ -265,6 +265,15 @@ Do not invent:
 - Work authorization rules
 - EOR eligibility
 - Course availability
+- Rental listings or property availability
+- Community events or associations
+- Housing or community prices
+- Official government information
+
+Housing and community information PivotPartner surfaces are external
+resource links for the user to explore themselves — not verified listings,
+events, or associations. Describe them that way rather than as confirmed
+facts.
 
 If live job or salary data has not been provided,
 do not present estimates as factual market data.
@@ -385,7 +394,7 @@ app.get('/api/jobs', async (req, res) => {
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages } = req.body
+    const { messages, context } = req.body
 
     // Validate messages
     if (!messages || !Array.isArray(messages)) {
@@ -393,6 +402,8 @@ app.post('/api/chat', async (req, res) => {
         error: 'Messages array is required',
       })
     }
+
+    const hasContext = typeof context === 'string' && context.trim().length > 0
 
     // ========================================
     // BUILD GROQ MESSAGE HISTORY
@@ -419,11 +430,12 @@ app.post('/api/chat', async (req, res) => {
         role: 'system',
         content: SYSTEM_PROMPT,
       },
+      ...(hasContext ? [{ role: 'system', content: context.trim() }] : []),
       ...conversationMessages,
     ]
 
     console.log(
-      `💬 Chat request received (${conversationMessages.length} messages)`
+      `💬 Chat request received (${conversationMessages.length} messages, context: ${hasContext ? 'yes' : 'no'})`
     )
 
     // ========================================

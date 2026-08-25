@@ -1,30 +1,28 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import type { ResumeProfile, CopilotMessage, AppTab, PillarTab, PreferredWorkModel } from './types'
+import type { ResumeProfile, CopilotMessage, AppTab, PillarTab, PreferredWorkModel, WorkModel } from './types'
 import Sidebar from './components/SideBar'
 import TabNavigation from './components/TabNavigation'
 import JobMatcherTab from './components/JobMatcherTab'
 import ThemeToggle from './components/ThemeToggle'
 import DashboardHome from './components/DashboardHome'
+import RelocationReadiness from './components/RelocationReadiness'
+import HousingResources from './components/HousingResources'
+import CommunityResources from './components/CommunityResources'
 import { useGroqChat } from './hooks/useGroqChat'
 import { isActionableJobIntent } from './utils/jobIntentDetection'
-import {
-  FileCheck,
-  Home,
-  Briefcase,
-  Wallet,
-  Users,
-  Stethoscope,
-  Landmark,
-  GraduationCap,
-  Globe,
-  HeartHandshake,
-  Target,
-} from 'lucide-react'
+import type { JobFetchResult } from './services/jobService'
+import { buildAiContext } from './services/aiContextService'
+import { useAuth } from './contexts/AuthContext'
+import { Stethoscope, Landmark, GraduationCap, LogOut, MessageCircle, X } from 'lucide-react'
 import './styles/theme.css'
 
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('dashboard')
+  // /app is intentionally not gated — user/signOut are only used to show an
+  // optional Logout control for visitors who did sign in, per the product
+  // decision to keep the dashboard open for Product Hunt exploration.
+  const { user, signOut } = useAuth()
 
   const [parsedProfile, setParsedProfile] =
     useState<ResumeProfile | null>(null)
@@ -36,6 +34,20 @@ function App() {
   // Same state mechanism as the fields above — not a separate profile system.
   const [workSituation, setWorkSituation] = useState('')
   const [preferredWorkModel, setPreferredWorkModel] = useState<PreferredWorkModel | ''>('')
+  // Mirrors the canonical job-fetch result JobMatcherTab already owns and
+  // already passes to CareerRecommendations/SkillAnalysis — reported up
+  // here purely so the AI context can reference the same opportunities,
+  // not to run a second fetch or duplicate scoring.
+  const [careerJobs, setCareerJobs] = useState<JobFetchResult | null>(null)
+  const [careerWorkModels, setCareerWorkModels] = useState<WorkModel[]>([])
+  // "Check work eligibility" AI Priority — toggles a Launching soon notice
+  // rather than inventing eligibility information.
+  const [showWorkEligibilityNotice, setShowWorkEligibilityNotice] = useState(false)
+  // Below the lg breakpoint, the AI copilot moves from a permanent stacked
+  // block into a floating button + overlay sheet — same Sidebar instance,
+  // same shared chat state, just a different container. Unused at lg+,
+  // where the existing inline sidebar layout is unchanged.
+  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false)
 
   // Single source of truth for the conversation — shared by the sidebar
   // chat panel and the dashboard's contextual AI input, both backed by the
@@ -54,12 +66,35 @@ function App() {
     const state = location.state as { initialPrompt?: string } | null
     if (state?.initialPrompt && !initialPromptSent.current) {
       initialPromptSent.current = true
-      sendPrompt(state.initialPrompt)
+      sendPrompt(state.initialPrompt, buildContext())
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const goToPillar = (tab: PillarTab) => setActiveTab(tab)
+
+  // Stable reference so JobMatcherTab's fetch effect (which lists this in
+  // its dependency array) doesn't re-run on unrelated App.tsx re-renders.
+  const handleJobsResolved = useCallback((result: JobFetchResult, models: WorkModel[]) => {
+    setCareerJobs(result)
+    setCareerWorkModels(models)
+  }, [])
+
+  // Structured context handed to Groq alongside each prompt — what
+  // PivotPartner already knows (relocation details, career profile, the
+  // same canonical job opportunities Career & Income shows), so the AI
+  // doesn't re-ask for information already collected.
+  const buildContext = () =>
+    buildAiContext({
+      origin,
+      destination,
+      moveTiming: relocationDate,
+      workSituation,
+      preferredWorkModel,
+      profile: parsedProfile,
+      careerJobs,
+      careerWorkModels,
+    })
 
   // Intercepts prompts from the sidebar chat and the dashboard's contextual
   // AI input before they reach Groq. Actionable job-seeking intent (see
@@ -92,7 +127,21 @@ function App() {
       return
     }
 
-    sendPrompt(text)
+    sendPrompt(text, buildContext())
+  }
+
+  // Dashboard-only wrapper around handleUserPrompt: below the lg breakpoint
+  // (1024px, matching the existing lg: classes below) the chat panel isn't
+  // on screen unless isMobileChatOpen is true, so a Dashboard-submitted
+  // prompt would otherwise update the shared chat state with no visible
+  // surface to show it. Opens the existing mobile sheet so the exchange is
+  // visible there; handleUserPrompt itself is untouched, so the desktop
+  // Sidebar and its existing quick actions behave exactly as before.
+  const handleDashboardPrompt = (text: string) => {
+    if (window.innerWidth < 1024) {
+      setIsMobileChatOpen(true)
+    }
+    handleUserPrompt(text)
   }
 
   // Quick actions from Sidebar
@@ -264,15 +313,6 @@ Your career can travel with you.`,
     pushMessage(aiMsg)
   }
 
-  const relocationCategories = [
-    { label: 'Documents', value: 80, icon: FileCheck },
-    { label: 'Housing', value: 60, icon: Home },
-    { label: 'Career', value: 55, icon: Briefcase },
-    { label: 'Finances', value: 70, icon: Wallet },
-    { label: 'Community', value: 30, icon: Users },
-    { label: 'Healthcare', value: 75, icon: Stethoscope },
-  ]
-
   return (
     <div className="h-screen flex flex-col" style={{ backgroundColor: 'var(--bg-app)' }}>
       {/* Header */}
@@ -287,7 +327,7 @@ Your career can travel with you.`,
           aria-label="Go to dashboard"
         >
           <div className="flex items-baseline gap-3 mb-1">
-            <h1 className="text-3xl font-bold text-[var(--primary)] tracking-tight">
+            <h1 className="text-xl font-bold text-[var(--primary)] tracking-tight sm:text-3xl">
               PivotPartner AI
             </h1>
 
@@ -301,14 +341,33 @@ Your career can travel with you.`,
           </p>
         </button>
 
-        <ThemeToggle />
+        <div className="flex items-center gap-3">
+          {user && (
+            <button
+              type="button"
+              onClick={() => signOut()}
+              className="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              title={user.email ? `Log out (${user.email})` : 'Log out'}
+            >
+              <LogOut size={16} aria-hidden="true" />
+              Log out
+            </button>
+          )}
+          <ThemeToggle />
+        </div>
       </div>
 
-      {/* Main Content — stacks on mobile/tablet, side-by-side from lg up */}
+      {/* Main Content — below lg, the AI copilot lives in a floating
+          button + overlay sheet (see below) instead of a permanent block,
+          so pillar content gets the full width/height. At lg and up, the
+          existing side-by-side layout is unchanged. */}
       <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
-        {/* Sidebar (AI copilot) */}
+        {/* Sidebar (AI copilot) — desktop/tablet only below; the lg:flex
+            override is what makes it visible again at that breakpoint,
+            with the exact same sizing/border classes as before. */}
         <div
-          className="flex h-[45vh] flex-col overflow-hidden border-b lg:h-auto lg:w-2/5 lg:border-b-0 lg:border-r"
+          className="hidden flex-col overflow-hidden border-b lg:flex lg:h-auto lg:w-2/5 lg:border-b-0 lg:border-r"
           style={{ borderColor: 'var(--border-warm)' }}
         >
           <Sidebar
@@ -344,7 +403,7 @@ Your career can travel with you.`,
                 parsedProfile={parsedProfile}
                 isLoading={isLoading}
                 onNavigate={goToPillar}
-                onSendPrompt={handleUserPrompt}
+                onSendPrompt={handleDashboardPrompt}
               />
             )}
 
@@ -408,44 +467,7 @@ Your career can travel with you.`,
                   </div>
                 </div>
 
-                {/* Readiness */}
-                <div className="bg-[#26c485]/5 border border-[#26c485]/20 rounded-lg p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                        Relocation Readiness
-                      </p>
-                      <p className="text-4xl font-bold text-[var(--primary)]">72%</p>
-                    </div>
-                    <Target size={40} className="text-[var(--primary)]" aria-hidden="true" />
-                  </div>
-
-                  <div className="w-full bg-[var(--surface-2)] rounded-md h-3">
-                    <div className="bg-[var(--primary)] h-3 rounded-md" style={{ width: '72%' }} />
-                  </div>
-                </div>
-
-                {/* Relocation Categories */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {relocationCategories.map((item) => {
-                    const Icon = item.icon
-                    return (
-                      <div key={item.label} className="border rounded-md p-4" style={{ borderColor: 'var(--border-warm)' }}>
-                        <div className="flex justify-between mb-2">
-                          <span className="flex items-center gap-1.5 text-sm font-medium" style={{ color: 'var(--text-strong)' }}>
-                            <Icon size={14} className="text-[var(--primary-dark)]" aria-hidden="true" />
-                            {item.label}
-                          </span>
-                          <span className="text-sm font-semibold text-[var(--primary-dark)]">{item.value}%</span>
-                        </div>
-
-                        <div className="w-full rounded-md h-2" style={{ backgroundColor: 'var(--surface-2)' }}>
-                          <div className="bg-[var(--primary)] h-2 rounded-md" style={{ width: `${item.value}%` }} />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                <RelocationReadiness />
 
                 {/* AI Priorities */}
                 <div className="border rounded-lg p-6" style={{ borderColor: 'var(--border-warm)' }}>
@@ -458,27 +480,41 @@ Your career can travel with you.`,
                       {
                         title: 'Explore housing options',
                         detail: 'Find areas that fit your budget and commute.',
+                        onClick: () => goToPillar('life'),
                       },
                       {
                         title: 'Review career opportunities',
                         detail: 'Compare local, remote and freelance options.',
+                        onClick: () => goToPillar('career'),
                       },
                       {
                         title: 'Check work eligibility',
                         detail: 'Understand whether an EOR pathway may be required.',
+                        onClick: () => setShowWorkEligibilityNotice((prev) => !prev),
                       },
                     ].map((priority, index) => (
-                      <div key={priority.title} className="flex gap-3">
-                        <span
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--primary-light)] text-xs font-bold text-[var(--primary-dark)]"
-                          aria-hidden="true"
+                      <div key={priority.title}>
+                        <button
+                          type="button"
+                          onClick={priority.onClick}
+                          className="flex w-full items-start gap-3 rounded-md -mx-2 px-2 py-1 text-left transition-colors hover:bg-[var(--surface-2)]"
                         >
-                          {index + 1}
-                        </span>
-                        <div>
-                          <p className="font-medium" style={{ color: 'var(--text-strong)' }}>{priority.title}</p>
-                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{priority.detail}</p>
-                        </div>
+                          <span
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--primary-light)] text-xs font-bold text-[var(--primary-dark)]"
+                            aria-hidden="true"
+                          >
+                            {index + 1}
+                          </span>
+                          <div>
+                            <p className="font-medium" style={{ color: 'var(--text-strong)' }}>{priority.title}</p>
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{priority.detail}</p>
+                          </div>
+                        </button>
+                        {priority.title === 'Check work eligibility' && showWorkEligibilityNotice && (
+                          <p className="ml-9 mt-1 text-xs font-medium" style={{ color: 'var(--accent-gold)' }}>
+                            Launching soon — work eligibility checks aren't available yet.
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -491,7 +527,12 @@ Your career can travel with you.`,
             {/* ============================== */}
 
             {activeTab === 'career' && (
-              <JobMatcherTab onProfileParsed={handleProfileParsed} onSendPrompt={sendPrompt} destination={destination} />
+              <JobMatcherTab
+                onProfileParsed={handleProfileParsed}
+                onSendPrompt={sendPrompt}
+                destination={destination}
+                onJobsResolved={handleJobsResolved}
+              />
             )}
 
             {/* ============================== */}
@@ -501,7 +542,7 @@ Your career can travel with you.`,
             {activeTab === 'life' && (
               <div className="p-6">
                 <div
-                  className="rounded-lg p-8 border"
+                  className="rounded-lg p-6 sm:p-8 border"
                   style={{ backgroundColor: 'var(--accent-terracotta-tint)', borderColor: 'var(--accent-terracotta)' }}
                 >
                   <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--text-strong)' }}>
@@ -511,9 +552,12 @@ Your career can travel with you.`,
                     Everything you need to settle into your new country.
                   </p>
 
+                  <div className="mb-4">
+                    <HousingResources destination={destination} origin={origin} />
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {[
-                      { label: 'Housing', detail: 'Neighborhoods, rent and commute', icon: Home },
                       { label: 'Healthcare', detail: 'Hospitals, clinics and insurance', icon: Stethoscope },
                       { label: 'Banking', detail: 'Local banking and financial setup', icon: Landmark },
                       { label: 'Education', detail: 'Schools and family services', icon: GraduationCap },
@@ -521,9 +565,17 @@ Your career can travel with you.`,
                       const Icon = item.icon
                       return (
                         <div key={item.label} className="bg-[var(--surface)] rounded-md p-4 border" style={{ borderColor: 'var(--border-warm)' }}>
-                          <div className="flex items-center gap-2 font-medium text-[var(--accent-terracotta-strong)]">
-                            <Icon size={16} aria-hidden="true" />
-                            {item.label}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 font-medium text-[var(--accent-terracotta-strong)]">
+                              <Icon size={16} aria-hidden="true" />
+                              {item.label}
+                            </div>
+                            <span
+                              className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                              style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-muted)' }}
+                            >
+                              Launching soon
+                            </span>
                           </div>
                           <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{item.detail}</p>
                         </div>
@@ -540,41 +592,74 @@ Your career can travel with you.`,
 
             {activeTab === 'community' && (
               <div className="p-6">
-                <div
-                  className="rounded-lg p-8 border"
-                  style={{ backgroundColor: 'var(--accent-indigo-tint)', borderColor: 'var(--accent-indigo)' }}
-                >
-                  <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--text-strong)' }}>
-                    Find Your Community
-                  </h2>
-                  <p className="mb-6" style={{ color: 'var(--text-body)' }}>
-                    Rebuild your professional and social network in your new country.
-                  </p>
-
-                  <div className="space-y-3">
-                    {[
-                      { label: 'Professional Communities', detail: 'Connect with people in your industry.', icon: Briefcase },
-                      { label: 'Expat Communities', detail: 'Meet people who have made a similar move.', icon: Globe },
-                      { label: 'Women & Family Communities', detail: 'Find relevant local groups and activities.', icon: HeartHandshake },
-                    ].map((item) => {
-                      const Icon = item.icon
-                      return (
-                        <div key={item.label} className="bg-[var(--surface)] rounded-md p-4 border" style={{ borderColor: 'var(--border-warm)' }}>
-                          <div className="flex items-center gap-2 font-medium text-[var(--accent-indigo-strong)]">
-                            <Icon size={16} aria-hidden="true" />
-                            {item.label}
-                          </div>
-                          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{item.detail}</p>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
+                <CommunityResources destination={destination} origin={origin} />
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Mobile AI copilot — floating launcher + overlay sheet, lg:hidden
+          so it never appears once the inline desktop sidebar above is
+          visible. Same Sidebar instance/props/state as the desktop
+          version — this is not a second chat implementation. */}
+      {!isMobileChatOpen && (
+        <button
+          type="button"
+          onClick={() => setIsMobileChatOpen(true)}
+          aria-label="Open AI Copilot chat"
+          className="fixed bottom-4 right-4 z-50 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-lg transition-transform hover:scale-105 lg:hidden"
+          style={{ backgroundColor: 'var(--primary-dark)' }}
+        >
+          <MessageCircle size={24} aria-hidden="true" />
+        </button>
+      )}
+
+      {isMobileChatOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end lg:hidden">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setIsMobileChatOpen(false)}
+            aria-hidden="true"
+          />
+
+          <div
+            className="relative flex h-[75vh] flex-col overflow-hidden rounded-t-xl border-t shadow-lg"
+            style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border-warm)' }}
+          >
+            <div
+              className="flex shrink-0 items-center justify-between border-b px-4 py-3"
+              style={{ borderColor: 'var(--border-warm)' }}
+            >
+              <span className="text-sm font-semibold" style={{ color: 'var(--text-strong)' }}>
+                AI Copilot
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsMobileChatOpen(false)}
+                aria-label="Close AI Copilot chat"
+                className="rounded-md p-1.5 transition-colors"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <X size={20} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1">
+              <Sidebar
+                messages={messages}
+                isLoading={isLoading}
+                onSendPrompt={handleUserPrompt}
+                onQuickAction={handleQuickAction}
+                onOpenResumeParser={() => {
+                  setIsMobileChatOpen(false)
+                  goToPillar('career')
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

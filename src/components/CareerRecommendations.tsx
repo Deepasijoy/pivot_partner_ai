@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import type { ResumeProfile, WorkModel, CareerRecommendation, Skill, JobOpportunity } from '../types';
+import type { ResumeProfile, WorkModel, CareerRecommendation, JobOpportunity } from '../types';
 import { getCareerRecommendations } from '../services/recommendationService';
-import { matchFreelanceForUser } from '../services/matchingService';
 import { calculateSkillGaps } from '../services/skillAnalysisService';
 import { TrendingUp, Zap, Globe, Award, Sparkles } from 'lucide-react';
 
@@ -20,39 +19,6 @@ interface CareerRecommendationsProps {
   // section, which is the only section these jobs actually feed.
   jobSource?: 'live' | 'fallback';
   jobReason?: string;
-}
-
-function hasSkillByName(skills: Skill[], name: string): boolean {
-  return skills.some((skill) => skill.name.toLowerCase() === name.toLowerCase());
-}
-
-// Adapts the existing FreelanceGig data (matchFreelanceForUser, unchanged)
-// onto the same CareerRecommendation shape the remote list already uses —
-// no new scoring math, just field mapping over real, existing data.
-function buildFreelanceRecommendations(profile: ResumeProfile): CareerRecommendation[] {
-  const gigs = matchFreelanceForUser(profile.skills);
-
-  return gigs.map((gig) => {
-    const matchedSkills = gig.requiredSkills.filter((skill) => hasSkillByName(profile.skills, skill.name));
-    const missingSkills = gig.requiredSkills.filter((skill) => !hasSkillByName(profile.skills, skill.name));
-
-    return {
-      id: `freelance_${gig.id}`,
-      title: gig.title,
-      company: gig.platform,
-      workModel: 'freelance',
-      matchScore: gig.matchPercentage,
-      reason: `${gig.duration} · via ${gig.platform}`,
-      salaryRange: gig.budget,
-      opportunityCount: gigs.length,
-      missingSkills,
-      matchedSkills,
-      recommendedAction:
-        missingSkills.length > 0
-          ? `Build ${missingSkills[0].name} to strengthen your bids`
-          : `You meet the requirements — apply on ${gig.platform}`,
-    };
-  });
 }
 
 function getMatchColor(score: number) {
@@ -74,8 +40,29 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   const remoteRecs = workModels.includes('remote')
     ? getCareerRecommendations(profile, jobs ? { jobs } : undefined)
     : [];
-  const freelanceRecs = workModels.includes('freelance') ? buildFreelanceRecommendations(profile) : [];
-  const allRecs = [...remoteRecs, ...freelanceRecs];
+
+  // Local reuses the SAME canonical, destination-scoped search — the
+  // fetch JobMatcherTab already runs is scoped to the resolved destination
+  // city/country, so there's no separate "local" API call to make. Only
+  // ever shown when that fetch actually succeeded live (never mock/
+  // fallback jobs relabeled as local), and the "Remote " title prefix
+  // (added by getCareerRecommendations) is stripped for display so a job
+  // is never shown labelled Remote under the Local heading.
+  const localRecs: CareerRecommendation[] =
+    workModels.includes('local') && jobSource === 'live' && jobs && jobs.length > 0
+      ? getCareerRecommendations(profile, { jobs, limit: 5 }).map((rec) => ({
+          ...rec,
+          workModel: 'local' as WorkModel,
+          title: rec.title.replace(/^Remote\s+/i, ''),
+        }))
+      : [];
+
+  // Freelance: Adzuna provides no reliable freelance/gig signal (contract_type
+  // distinguishes permanent vs. contract employment, not freelance work —
+  // see Step 6 diagnosis), and mock freelance data must not be presented as
+  // real. Honest MVP state: always unavailable, never mock, never relabeled
+  // remote/local jobs.
+  const allRecs = [...remoteRecs, ...localRecs];
 
   const handleAskAi = (rec: CareerRecommendation, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -292,7 +279,11 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
           <h3 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
             Freelance &amp; Consulting
           </h3>
-          <div className="space-y-3">{freelanceRecs.map(renderCard)}</div>
+          <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+            <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+              Freelance opportunities are currently unavailable.
+            </p>
+          </div>
         </section>
       )}
 
@@ -301,14 +292,15 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
           <h3 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
             Local
           </h3>
-          <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
-            <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
-              Local opportunity matching — coming soon
-            </p>
-            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              PivotPartner will add destination-specific local opportunity matching in a future release.
-            </p>
-          </div>
+          {localRecs.length > 0 ? (
+            <div className="space-y-3">{localRecs.map(renderCard)}</div>
+          ) : (
+            <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+              <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                Local opportunities are currently unavailable.
+              </p>
+            </div>
+          )}
         </section>
       )}
 

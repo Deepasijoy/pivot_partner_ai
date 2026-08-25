@@ -2,7 +2,8 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
 export async function chatWithGroq(
   userMessage: string,
-  conversationHistory: Array<{ role: string; content: string }>
+  conversationHistory: Array<{ role: string; content: string }>,
+  context?: string
 ): Promise<string> {
   try {
     // Format messages for backend
@@ -18,6 +19,7 @@ export async function chatWithGroq(
       },
       body: JSON.stringify({
         messages: messages,
+        ...(context ? { context } : {}),
       }),
     })
 

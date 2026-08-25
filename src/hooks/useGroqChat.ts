@@ -18,7 +18,7 @@ export function useGroqChat(initialMessages: CopilotMessage[] = []) {
   }, []);
 
   const sendPrompt = useCallback(
-    async (messageText: string) => {
+    async (messageText: string, context?: string) => {
       const trimmed = messageText.trim();
       if (!trimmed || isLoading) return;
 
@@ -38,7 +38,7 @@ export function useGroqChat(initialMessages: CopilotMessage[] = []) {
           content: msg.content,
         }));
 
-        const aiResponse = await chatWithGroq(trimmed, conversationHistory);
+        const aiResponse = await chatWithGroq(trimmed, conversationHistory, context);
 
         const aiMsg: CopilotMessage = {
           id: (Date.now() + 1).toString(),

@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import LandingPage from './pages/LandingPage.tsx'
+import { AuthProvider } from './contexts/AuthContext.tsx'
 import './styles/theme.css'
 
 // Code-split the authenticated app and auth placeholders out of the
@@ -24,14 +25,16 @@ function RouteFallback() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <Suspense fallback={<RouteFallback />}>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/app" element={<App />} />
-          <Route path="/login" element={<AuthPlaceholder mode="login" />} />
-          <Route path="/get-started" element={<AuthPlaceholder mode="signup" />} />
-        </Routes>
-      </Suspense>
+      <AuthProvider>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/app" element={<App />} />
+            <Route path="/login" element={<AuthPlaceholder mode="login" />} />
+            <Route path="/get-started" element={<AuthPlaceholder mode="signup" />} />
+          </Routes>
+        </Suspense>
+      </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>,
 )

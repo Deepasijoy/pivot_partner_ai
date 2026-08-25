@@ -12,14 +12,16 @@ import { loadJobOpportunities, type JobFetchResult } from '../services/jobServic
 interface JobMatcherTabProps {
   onProfileParsed?: (profile: ResumeProfile) => void;
   onSendPrompt?: (text: string) => void;
-  // Optional for now — App.tsx does not pass this yet (threading the
-  // relocation destination down from App.tsx is a separate, not-yet-scoped
-  // change). When absent, the job fetch below correctly and honestly falls
-  // back to mock jobs, since there is no location to search Adzuna against.
   destination?: string;
+  // Reports the canonical job-fetch result (and the work models it was
+  // computed for) up to App.tsx, purely so it can be included in AI
+  // context — mirrors the existing onProfileParsed pattern. Does not add
+  // a second fetch or any new scoring; App.tsx only ever receives the
+  // same result already passed to CareerRecommendations/SkillAnalysis.
+  onJobsResolved?: (result: JobFetchResult, workModels: WorkModel[]) => void;
 }
 
-const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPrompt, destination }) => {
+const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPrompt, destination, onJobsResolved }) => {
   const [parsedProfile, setParsedProfile] = useState<ResumeProfile | null>(null);
   const [workModels, setWorkModels] = useState<WorkModel[]>([]);
   // The single canonical job-fetch result for this screen. Not yet consumed
@@ -78,6 +80,7 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
       if (!cancelled) {
         setJobResult(result);
         setJobsLoading(false);
+        onJobsResolved?.(result, workModels);
       }
     };
 
@@ -86,7 +89,7 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
     return () => {
       cancelled = true;
     };
-  }, [parsedProfile, workModels, destination]);
+  }, [parsedProfile, workModels, destination, onJobsResolved]);
 
   // Temporary verification aid for this step — Steps 7-9 will replace this
   // with real consumption (props into CareerRecommendations/SkillAnalysis,
