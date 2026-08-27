@@ -129,7 +129,7 @@ function buildReasons(profile: ResumeProfile, score: JobScore): string {
   }
 
   if (score.experienceScore >= 70) {
-    reasons.push(`Your ${profile.yearsExperience} years of experience matches this role's seniority`);
+    reasons.push(`Your ${profile.yearsExperience} years of overall professional experience aligns with this role's seniority level.`);
   }
 
   if (score.industryScore >= 100) {
@@ -206,6 +206,7 @@ export function getCareerRecommendations(
       missingSkills: score.missingSkills,
       matchedSkills: score.matchedSkills,
       recommendedAction: buildRecommendedAction(score.matchScore, score.missingSkills, job.company),
+      applyUrl: job.applyUrl,
     };
   });
 

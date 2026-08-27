@@ -228,6 +228,7 @@ input[type='text'],
 input[type='email'],
 input[type='password'],
 input[type='date'],
+input[type='number'],
 textarea,
 select {
   @apply w-full px-4 py-2.5 border;

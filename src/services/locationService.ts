@@ -19,6 +19,10 @@ export interface LocationCandidate {
   region?: string;
   countryName: string;
   countryCode: string; // ISO-3166-1 alpha-2, lowercase
+  // Nominatim's own real-world-prominence score (0-1) for this candidate —
+  // used only to tell a globally-dominant place apart from a small
+  // same-named locality elsewhere; never a hand-built city ranking.
+  importance: number;
 }
 
 export interface ResolvedLocation {
@@ -56,6 +60,7 @@ interface NominatimAddress {
 interface NominatimResult {
   display_name: string;
   address?: NominatimAddress;
+  importance?: number;
 }
 
 async function queryNominatim(query: string): Promise<NominatimResult[]> {
@@ -64,6 +69,11 @@ async function queryNominatim(query: string): Promise<NominatimResult[]> {
     format: 'jsonv2',
     addressdetails: '1',
     limit: '5',
+    // Requests English place names regardless of the destination's own
+    // locale, so results are consistent for this app's English UI (without
+    // this, Nominatim can return a country's name in its local language —
+    // e.g. Arabic for the UAE — with no per-destination special-casing).
+    'accept-language': 'en',
   });
 
   const response = await fetch(`${NOMINATIM_ENDPOINT}?${params.toString()}`, {
@@ -88,8 +98,21 @@ function toCandidate(result: NominatimResult): LocationCandidate | null {
     region: address.state || address.region,
     countryName: address.country || result.display_name,
     countryCode,
+    importance: result.importance ?? 0,
   };
 }
+
+// Conservative thresholds for auto-resolving an otherwise-ambiguous
+// destination, derived from real Nominatim data for known cross-country
+// name collisions (London/Toronto/Sydney/Dublin vs small same-named
+// localities elsewhere): the true global city consistently scored at least
+// ~0.24 higher in importance than the next-best candidate from a different
+// country, and always scored above 0.75 itself. Both thresholds are kept
+// well clear of those observed margins so only a genuinely lopsided case
+// auto-resolves — anything closer still falls through to the existing
+// ambiguous handling below.
+const MIN_TOP_IMPORTANCE = 0.5;
+const IMPORTANCE_MARGIN = 0.15;
 
 /**
  * Resolves free-text destination input (a city, a region, a country, or the
@@ -151,7 +174,35 @@ export async function resolveDestination(rawInput: string): Promise<ResolvedLoca
   const distinctCountryCodes = new Set(candidates.map((candidate) => candidate.countryCode));
 
   if (distinctCountryCodes.size > 1) {
-    // Top matches disagree on country — genuinely ambiguous. Surface the
+    // Top matches disagree on country. Before giving up, check whether one
+    // candidate is so much more prominent (by Nominatim's own importance
+    // score) than every candidate from a different country that guessing
+    // it is actually safe — e.g. "London" globally means London, UK, not
+    // the much smaller London, Ontario, even though both are valid matches.
+    // This is general (uses Nominatim's existing relevance signal, not a
+    // list of specific city names) and conservative (falls through to the
+    // existing ambiguous behavior unless the gap clearly favors one place).
+    const byImportance = [...candidates].sort((a, b) => b.importance - a.importance);
+    const top = byImportance[0];
+    const bestOtherCountry = byImportance.find((candidate) => candidate.countryCode !== top.countryCode);
+
+    if (
+      bestOtherCountry &&
+      top.importance >= MIN_TOP_IMPORTANCE &&
+      top.importance - bestOtherCountry.importance >= IMPORTANCE_MARGIN
+    ) {
+      return {
+        originalInput: rawInput,
+        isRemote: false,
+        city: top.city,
+        region: top.region,
+        countryName: top.countryName,
+        countryCode: top.countryCode,
+        confidence: 'high',
+      };
+    }
+
+    // No candidate is clearly dominant — genuinely ambiguous. Surface the
     // candidates instead of guessing.
     return {
       originalInput: rawInput,

@@ -10,8 +10,9 @@ import RelocationReadiness from './components/RelocationReadiness'
 import HousingResources from './components/HousingResources'
 import CommunityResources from './components/CommunityResources'
 import { useGroqChat } from './hooks/useGroqChat'
-import { isActionableJobIntent } from './utils/jobIntentDetection'
+import { isActionableJobIntent, isActionableRelocationIntent } from './utils/jobIntentDetection'
 import type { JobFetchResult } from './services/jobService'
+import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
 import { buildAiContext } from './services/aiContextService'
 import { useAuth } from './contexts/AuthContext'
 import { Stethoscope, Landmark, GraduationCap, LogOut, MessageCircle, X } from 'lucide-react'
@@ -61,24 +62,66 @@ function App() {
   // location.state, so this is a no-op for the normal app entry point.
   const location = useLocation()
   const initialPromptSent = useRef(false)
+  // Guards the one real career-analysis chat message posted once actual
+  // job-matched data first becomes available for the current resume (see
+  // handleJobsResolved below) — reset per new resume in handleProfileParsed
+  // so re-uploading a different resume gets its own follow-up message.
+  const careerAnalysisSent = useRef(false)
 
   useEffect(() => {
     const state = location.state as { initialPrompt?: string } | null
     if (state?.initialPrompt && !initialPromptSent.current) {
       initialPromptSent.current = true
-      sendPrompt(state.initialPrompt, buildContext())
+      handleUserPrompt(state.initialPrompt)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const goToPillar = (tab: PillarTab) => setActiveTab(tab)
 
-  // Stable reference so JobMatcherTab's fetch effect (which lists this in
-  // its dependency array) doesn't re-run on unrelated App.tsx re-renders.
+  // Stable-ish reference so JobMatcherTab's fetch effect (which lists this
+  // in its dependency array) doesn't re-run beyond what parsedProfile
+  // already triggers there directly.
+  //
+  // Also posts the one real, honest post-analysis chat summary — reusing
+  // the exact same matching/skill-gap engine (matchJobsForUser,
+  // generateCareerPaths, mergeCareerPathSkillGaps) that CareerRecommendations
+  // and SkillAnalysis already use, fed by the same canonical job-fetch
+  // result — so the chat is never out of sync with the dashboard, and never
+  // invents a matched-skills count or readiness score.
   const handleJobsResolved = useCallback((result: JobFetchResult, models: WorkModel[]) => {
     setCareerJobs(result)
     setCareerWorkModels(models)
-  }, [])
+
+    if (!parsedProfile || careerAnalysisSent.current) return
+
+    const matchedJobs = matchJobsForUser(parsedProfile.skills, result.jobs)
+    const paths = generateCareerPaths(parsedProfile.skills, matchedJobs)
+    const topPath = paths[0]
+    if (!topPath) return
+
+    careerAnalysisSent.current = true
+
+    const gaps = mergeCareerPathSkillGaps(paths)
+    const gapsClause =
+      gaps.length > 0
+        ? `Skills to strengthen: ${gaps.map((gap) => gap.skill.name).join(', ')}`
+        : "No major skill gaps — you're well-positioned for your top match."
+
+    const aiMsg: CopilotMessage = {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: `Career analysis complete!
+
+Top match: ${topPath.title} — ${topPath.matchPercentage}% fit
+${gapsClause}
+
+Open Career & Income to see your full skill-gap breakdown and career paths.`,
+      timestamp: new Date(),
+    }
+
+    pushMessage(aiMsg)
+  }, [parsedProfile, pushMessage])
 
   // Structured context handed to Groq alongside each prompt — what
   // PivotPartner already knows (relocation details, career profile, the
@@ -122,6 +165,32 @@ function App() {
           action: 'open-resume-parser',
         }
         pushMessage(aiMsg)
+      }, 500)
+
+      return
+    }
+
+    // Same short-circuit shape as the job-intent branch above, for
+    // move-planning intent (see isActionableRelocationIntent) — routes to
+    // the existing Relocation tab instead of a generic Groq round-trip.
+    if (isActionableRelocationIntent(text)) {
+      const userMsg: CopilotMessage = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: text,
+        timestamp: new Date(),
+      }
+      pushMessage(userMsg)
+
+      setTimeout(() => {
+        const aiMsg: CopilotMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: "Let's start with your move — here's your Relocation plan.",
+          timestamp: new Date(),
+        }
+        pushMessage(aiMsg)
+        goToPillar('relocation')
       }, 500)
 
       return
@@ -268,25 +337,17 @@ Let's make your experience travel with you!`,
     }
   }
 
-  // Called when JobMatcherTab successfully analyzes a resume
+  // Called when JobMatcherTab successfully analyzes a resume. Reports only
+  // facts already known at parse time (no job-matched data exists yet —
+  // that requires a work-model choice and the canonical job fetch, handled
+  // in handleJobsResolved below once it's real). Resets the one-shot
+  // career-analysis guard so a newly uploaded resume gets its own honest
+  // follow-up once its real analysis is ready.
   const handleProfileParsed = (profile: ResumeProfile) => {
     setParsedProfile(profile)
+    careerAnalysisSent.current = false
 
     const allSkills = profile.skills || []
-
-    const matchedSkills = Math.floor(allSkills.length * 0.7)
-    const gapSkills = Math.max(allSkills.length - matchedSkills, 0)
-
-    const gapSkillsList = allSkills
-      .slice(-gapSkills)
-      .map((s) => s.name)
-      .slice(0, 3)
-      .join(', ')
-
-    const readyPercentage =
-      allSkills.length > 0
-        ? Math.round((matchedSkills / allSkills.length) * 100)
-        : 0
 
     const aiMsg: CopilotMessage = {
       id: Date.now().toString(),
@@ -299,12 +360,7 @@ Your career profile:
 • Industries: ${profile.industries?.join(', ') || 'Various'}
 • Skills identified: ${allSkills.length}
 
-Skill gap analysis:
-• Skills matched: ${matchedSkills}/${allSkills.length}
-• Skills to develop: ${gapSkillsList || 'No major gaps identified'}
-• Ready score: ${readyPercentage}%
-
-Next steps: explore Career & Income, compare local vs remote options, check work eligibility, and build your global professional profile.
+Next: choose how you'd like to work (local, remote, or freelance) in Career & Income — I'll match your profile against real opportunities and share your actual skill-gap analysis once that's ready.
 
 Your career can travel with you.`,
       timestamp: new Date(),
@@ -381,6 +437,21 @@ Your career can travel with you.`,
 
         {/* Dashboard / pillar content */}
         <div className="flex flex-1 flex-col overflow-hidden lg:w-3/5" style={{ backgroundColor: 'var(--bg-app)' }}>
+          {/* Guidance nudge — only once the relocation profile is usable
+              (same origin/destination-filled condition already used for
+              Journey status and Next Best Action below), and only on the
+              Dashboard overview itself, not once a pillar is already open. */}
+          {activeTab === 'dashboard' && origin.trim() && destination.trim() && (
+            <div className="px-6 pt-4 pb-2" style={{ backgroundColor: 'var(--surface)' }}>
+              <p className="text-sm font-semibold" style={{ color: 'var(--text-strong)' }}>
+                You&rsquo;re all set. What would you like to work on first?
+              </p>
+              <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+                Choose an area below and I&rsquo;ll guide you through the next steps.
+              </p>
+            </div>
+          )}
+
           <TabNavigation activeTab={activeTab as PillarTab} onTabChange={goToPillar} />
 
           <div className="flex-1 overflow-y-auto">
@@ -467,7 +538,7 @@ Your career can travel with you.`,
                   </div>
                 </div>
 
-                <RelocationReadiness />
+                <RelocationReadiness destination={destination} />
 
                 {/* AI Priorities */}
                 <div className="border rounded-lg p-6" style={{ borderColor: 'var(--border-warm)' }}>

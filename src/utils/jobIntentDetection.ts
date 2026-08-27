@@ -19,3 +19,20 @@ export function isActionableJobIntent(message: string): boolean {
   if (!lower) return false;
   return JOB_SEEKING_PATTERNS.some((pattern) => pattern.test(lower));
 }
+
+// Same deterministic, pattern-based approach as JOB_SEEKING_PATTERNS above —
+// no network call, no scoring model. Used to route move-planning intent to
+// the Relocation tab instead of a generic Groq round-trip.
+const RELOCATION_PLANNING_PATTERNS: RegExp[] = [
+  /\bhelp( me)? plan (my|our) move\b/i,
+  /\bplan (my|our) move\b/i,
+  /\bhelp( me)? relocate\b/i,
+  /\bhelp with (my|our) relocation\b/i,
+  /\brelocation plan\b/i,
+];
+
+export function isActionableRelocationIntent(message: string): boolean {
+  const lower = message.trim().toLowerCase();
+  if (!lower) return false;
+  return RELOCATION_PLANNING_PATTERNS.some((pattern) => pattern.test(lower));
+}

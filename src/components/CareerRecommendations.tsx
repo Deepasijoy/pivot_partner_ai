@@ -36,6 +36,9 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   jobReason,
 }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Which alternative (if any) the user asked to see after Local came up
+  // empty — null until they choose, so nothing is shown automatically.
+  const [localFallbackChoice, setLocalFallbackChoice] = useState<'remote' | 'freelance' | null>(null);
 
   const remoteRecs = workModels.includes('remote')
     ? getCareerRecommendations(profile, jobs ? { jobs } : undefined)
@@ -55,6 +58,17 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
           workModel: 'local' as WorkModel,
           title: rec.title.replace(/^Remote\s+/i, ''),
         }))
+      : [];
+
+  // Local → Remote fallback: when Local has nothing suitable, offer the
+  // same canonical live jobs as remote alternatives instead of a dead end.
+  // Reuses the exact same getCareerRecommendations()/jobs/jobSource this
+  // file already uses for remoteRecs above — no new fetch, no new scoring
+  // — and stays gated on jobSource === 'live' so it can NEVER show
+  // fallback/mock jobs relabeled as a "live" remote suggestion.
+  const remoteFallbackRecs: CareerRecommendation[] =
+    workModels.includes('local') && localRecs.length === 0 && jobSource === 'live' && jobs && jobs.length > 0
+      ? getCareerRecommendations(profile, { jobs })
       : [];
 
   // Freelance: Adzuna provides no reliable freelance/gig signal (contract_type
@@ -90,7 +104,14 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
     setExpandedId(rec.id);
   };
 
-  const renderCard = (rec: CareerRecommendation, index: number) => {
+  // isVerifiedLocal: true only for cards from localRecs — those come from a
+  // destination-scoped Adzuna query (where=city or region; see
+  // JobMatcherTab.tsx), so their location genuinely matches the user's
+  // resolved destination. remoteRecs/remoteFallbackRecs reuse that same
+  // canonical job list without any further location verification, so their
+  // actual geographic eligibility for this user is not confirmed by our
+  // data — Adzuna's schema has no eligibility/remote-region field to check.
+  const renderCard = (rec: CareerRecommendation, index: number, isVerifiedLocal: boolean) => {
     const colors = getMatchColor(rec.matchScore);
     const isExpanded = expandedId === rec.id;
     // Reuses the existing skillAnalysisService function directly — matchedSkills
@@ -170,7 +191,27 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
 
             <div className="p-3 bg-[#26c485]/10 border border-[#26c485]/30 rounded-lg">
               <p className="text-xs font-semibold text-[var(--primary-dark)] uppercase tracking-wider mb-1">Next Step</p>
-              <p className="text-sm font-medium text-[var(--text-dark)]">{rec.recommendedAction}</p>
+              {jobSource !== 'live' ? (
+                <p className="text-sm font-medium text-[var(--text-dark)]">Example opportunity — not a real listing.</p>
+              ) : rec.applyUrl ? (
+                <>
+                  <a
+                    href={rec.applyUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(event) => event.stopPropagation()}
+                    className="text-sm font-medium underline text-[var(--primary-dark)] hover:opacity-80"
+                  >
+                    {isVerifiedLocal ? 'View & Apply' : 'Check eligibility'}
+                  </a>
+                  <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    You may be applying before relocating — the employer or job source may apply its own location,
+                    work-authorization, or regional restrictions. Verify eligibility directly on the listing.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm font-medium text-[var(--text-dark)]">Listing link unavailable.</p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
@@ -270,7 +311,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               </span>
             )}
           </div>
-          <div className="space-y-3">{remoteRecs.map(renderCard)}</div>
+          <div className="space-y-3">{remoteRecs.map((rec, index) => renderCard(rec, index, false))}</div>
         </section>
       )}
 
@@ -293,12 +334,73 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
             Local
           </h3>
           {localRecs.length > 0 ? (
-            <div className="space-y-3">{localRecs.map(renderCard)}</div>
+            <div className="space-y-3">{localRecs.map((rec, index) => renderCard(rec, index, true))}</div>
           ) : (
-            <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
-              <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
-                Local opportunities are currently unavailable.
-              </p>
+            <div className="space-y-3">
+              <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+                <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                  We couldn&rsquo;t find a suitable local opportunity right now.
+                </p>
+                <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                  Would you be interested in exploring remote or freelance opportunities instead?
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLocalFallbackChoice('remote')}
+                    aria-pressed={localFallbackChoice === 'remote'}
+                    className="rounded-md border px-3 py-1.5 text-xs font-medium transition-colors"
+                    style={
+                      localFallbackChoice === 'remote'
+                        ? { borderColor: 'var(--primary-dark)', backgroundColor: 'var(--primary-light)', color: 'var(--primary-dark)' }
+                        : { borderColor: 'var(--border-warm)', color: 'var(--text-body)' }
+                    }
+                  >
+                    Explore Remote
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocalFallbackChoice('freelance')}
+                    aria-pressed={localFallbackChoice === 'freelance'}
+                    className="rounded-md border px-3 py-1.5 text-xs font-medium transition-colors"
+                    style={
+                      localFallbackChoice === 'freelance'
+                        ? { borderColor: 'var(--primary-dark)', backgroundColor: 'var(--primary-light)', color: 'var(--primary-dark)' }
+                        : { borderColor: 'var(--border-warm)', color: 'var(--text-body)' }
+                    }
+                  >
+                    Explore Freelance
+                  </button>
+                </div>
+              </div>
+
+              {localFallbackChoice === 'remote' && (
+                remoteFallbackRecs.length > 0 ? (
+                  <>
+                    <span
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                      style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-dark)' }}
+                    >
+                      Live opportunities
+                    </span>
+                    <div className="space-y-3">{remoteFallbackRecs.map((rec, index) => renderCard(rec, index, false))}</div>
+                  </>
+                ) : (
+                  <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+                    <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                      {jobReason || 'Live remote search is currently unavailable.'}
+                    </p>
+                  </div>
+                )
+              )}
+
+              {localFallbackChoice === 'freelance' && (
+                <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+                  <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                    Freelance opportunities are currently unavailable.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </section>

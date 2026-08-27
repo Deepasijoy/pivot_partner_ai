@@ -7,7 +7,7 @@ import SkillAnalysis from './SkillAnalysis';
 import WorkModelSelector from './WorkModelSelector';
 import { resolveDestination, isAdzunaSupportedCountry } from '../services/locationService';
 import { deriveJobQuery } from '../services/jobQueryService';
-import { loadJobOpportunities, type JobFetchResult } from '../services/jobService';
+import { loadJobOpportunities, fallbackResult, type JobFetchResult } from '../services/jobService';
 
 interface JobMatcherTabProps {
   onProfileParsed?: (profile: ResumeProfile) => void;
@@ -66,14 +66,25 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
       if (location.countryCode && !location.isRemote && isAdzunaSupportedCountry(location.countryCode)) {
         result = await loadJobOpportunities({
           what: query.primaryQuery,
-          where: location.city,
+          // Falls back to the resolved region (e.g. "New Jersey") when no
+          // city is available — a state/region-level destination has no
+          // city/town/village/county in its resolved address, so `city`
+          // alone left the search unfiltered by location entirely.
+          where: location.city || location.region,
           country: location.countryCode,
         });
+      } else if (location.countryCode && !location.isRemote && location.countryName) {
+        // Country resolved, but it isn't one of the job-search provider's
+        // supported boards — skip the live call (already known to be
+        // rejected) and say so specifically, rather than the generic
+        // "no destination country" reason or implying no remote jobs exist.
+        result = fallbackResult(
+          `Live job listings for ${location.countryName} aren't currently supported by our job-search provider.`
+        );
       } else {
-        // No resolved/supported country yet (unresolved, ambiguous, remote,
-        // or outside Adzuna's coverage) — skip the live call rather than
-        // make a request already known to be rejected; loadJobOpportunities
-        // still returns the correctly tagged fallback result.
+        // Truly unresolved/ambiguous, or remote — no country name to
+        // reference; loadJobOpportunities still returns the correctly
+        // tagged fallback result with its own generic reason.
         result = await loadJobOpportunities({ what: query.primaryQuery });
       }
 
@@ -134,7 +145,12 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
         <>
           {/* Tier 1 — hero: overall career profile */}
           <section>
-            <CareerProfile profile={parsedProfile} />
+            <CareerProfile
+              profile={parsedProfile}
+              jobs={jobResult?.jobs}
+              jobSource={jobResult?.source}
+              jobReason={jobResult?.reason}
+            />
           </section>
 
           {/* Tier 2 — recommended paths, filtered by work model preference */}

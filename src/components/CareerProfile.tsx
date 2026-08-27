@@ -1,9 +1,18 @@
 import React from 'react';
-import type { ResumeProfile } from '../types';
+import type { ResumeProfile, JobOpportunity } from '../types';
 import { getCareerRecommendations, deriveSeniority, splitSkillsByTransferability } from '../services/recommendationService';
 
 interface CareerProfileProps {
   profile: ResumeProfile;
+  // The canonical job-fetch result (live Adzuna jobs, or the tagged mock
+  // fallback) — same data CareerRecommendations/SkillAnalysis already use,
+  // so "Suggested Role"/"Market Fit" reflects the same dataset instead of
+  // silently defaulting to mock jobs. Optional so this still works if a
+  // parent hasn't wired it in yet — getCareerRecommendations() falls back
+  // to its own mock default in that case, exactly as it already did before.
+  jobs?: JobOpportunity[];
+  jobSource?: 'live' | 'fallback';
+  jobReason?: string;
 }
 
 function getFitColor(score: number): string {
@@ -12,8 +21,8 @@ function getFitColor(score: number): string {
   return '#EF4444';
 }
 
-const CareerProfile: React.FC<CareerProfileProps> = ({ profile }) => {
-  const [topRecommendation] = getCareerRecommendations(profile, { limit: 1 });
+const CareerProfile: React.FC<CareerProfileProps> = ({ profile, jobs, jobSource, jobReason }) => {
+  const [topRecommendation] = getCareerRecommendations(profile, jobs ? { jobs, limit: 1 } : { limit: 1 });
   const { coreSkills, transferableSkills } = splitSkillsByTransferability(profile.skills);
   const seniority = deriveSeniority(profile.yearsExperience);
   const marketFit = topRecommendation?.matchScore ?? 0;
@@ -22,7 +31,17 @@ const CareerProfile: React.FC<CareerProfileProps> = ({ profile }) => {
   return (
     <div className="w-full max-w-4xl mx-auto rounded-xl bg-[var(--surface)] shadow-md border border-[var(--border-warm)] overflow-hidden">
       <div className="bg-[#26c485] px-6 py-5 sm:px-8 sm:py-6">
-        <p className="text-xs font-medium uppercase tracking-wide text-white/80">Suggested Role</p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-white/80">Suggested Role</p>
+          {jobSource && (
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-white/20 text-white"
+              title={jobSource === 'fallback' ? jobReason : undefined}
+            >
+              {jobSource === 'live' ? 'Live opportunities' : 'Example opportunities — live search unavailable'}
+            </span>
+          )}
+        </div>
         <h2 className="mt-1 text-2xl font-semibold text-white">
           {topRecommendation?.title ?? 'Building your profile…'}
         </h2>
@@ -58,6 +77,11 @@ const CareerProfile: React.FC<CareerProfileProps> = ({ profile }) => {
             style={{ width: `${Math.min(100, Math.max(0, marketFit))}%`, backgroundColor: fitColor }}
           />
         </div>
+        <p className="text-xs text-[var(--text-light)]">
+          Reflects overall profile fit for this role — skills, experience, and industry/transferable-skill alignment
+          combined. The Career Paths percentages further down use a different, narrower calculation (skill overlap
+          with that specific opportunity only), so the two numbers can legitimately differ.
+        </p>
 
         <div>
           <p className="text-sm font-semibold text-[var(--text-dark)] mb-2">Core Skills</p>

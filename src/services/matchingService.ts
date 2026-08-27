@@ -112,3 +112,27 @@ export function generateCareerPaths(userSkills: Skill[], matchedJobs: JobOpportu
 
   return paths;
 }
+
+// Merges each generated career path's own skill gaps (already computed above
+// by calculateSkillGaps, via buildJobCareerPath/buildFreelanceCareerPath)
+// into one deduped, profile-level list. Not a second gap calculation — every
+// SkillGap here was already produced by the existing engine; this only
+// aggregates results so a caller isn't limited to a single path's view.
+// Shared by SkillAnalysis.tsx (dashboard) and App.tsx (post-resume chat
+// summary) so both stay consistent with each other.
+export function mergeCareerPathSkillGaps(paths: CareerPath[]): SkillGap[] {
+  const seen = new Set<string>();
+  const merged: SkillGap[] = [];
+
+  for (const path of paths) {
+    for (const gap of path.skillGaps) {
+      const key = gap.skill.name.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(gap);
+      }
+    }
+  }
+
+  return merged;
+}

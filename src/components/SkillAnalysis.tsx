@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { ResumeProfile, SkillGap, CourseRecommendation, CareerPath, JobOpportunity } from '../types';
-import { calculateSkillGaps, recommendCourses } from '../services/skillAnalysisService';
-import { matchJobsForUser, generateCareerPaths } from '../services/matchingService';
+import { recommendCourses } from '../services/skillAnalysisService';
+import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from '../services/matchingService';
 import { AlertCircle, TrendingUp, BookOpen } from 'lucide-react';
 
 interface SkillAnalysisProps {
@@ -53,11 +53,14 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
   useEffect(() => {
     const matchedJobs = matchJobsForUser(profile.skills, jobs);
     const paths = generateCareerPaths(profile.skills, matchedJobs);
-    const topJob = matchedJobs[0];
-    const gaps = topJob
-      ? calculateSkillGaps(profile.skills, topJob.requiredSkills)
-      : [];
+    // Overall, profile-level gaps: the union of every generated career
+    // path's own skill gaps (each already computed by calculateSkillGaps
+    // inside generateCareerPaths) — not scoped to a single top job, so this
+    // section doesn't claim "no gaps" just because the #1 match happens to
+    // have none while other paths (shown below) do.
+    const gaps = mergeCareerPathSkillGaps(paths);
     const courses = recommendCourses(gaps);
+    const topJob = matchedJobs[0];
     const overallMatchScore =
       paths[0]?.matchPercentage ?? topJob?.matchScore ?? 0;
 
@@ -117,19 +120,29 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
           Skill Gaps
         </h2>
         {skillGaps && skillGaps.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {skillGaps.map((gap) => (
-              <div
-                key={gap.skill.name}
-                className="rounded-lg border border-[var(--border-light)] bg-[var(--surface)] p-4 shadow-sm"
-              >
-                <p className="font-medium text-[var(--text-dark)]">{gap.skill.name}</p>
-                <p className="mt-1 text-sm text-[var(--text-light)]">
-                  Est. {gap.estimatedTimeWeeks} {gap.estimatedTimeWeeks === 1 ? 'week' : 'weeks'} to close
-                </p>
-              </div>
-            ))}
-          </div>
+          <>
+            <p className="text-sm font-medium text-[var(--text-dark)] mb-2">
+              {skillGaps.length} skill{skillGaps.length === 1 ? '' : 's'} to strengthen
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {skillGaps.map((gap) => (
+                <div
+                  key={gap.skill.name}
+                  className="rounded-lg border border-[var(--border-light)] bg-[var(--surface)] p-4 shadow-sm"
+                >
+                  <p className="font-medium text-[var(--text-dark)]">{gap.skill.name}</p>
+                  <p className="mt-1 text-sm text-[var(--text-light)]">
+                    Est. {gap.estimatedTimeWeeks} {gap.estimatedTimeWeeks === 1 ? 'week' : 'weeks'} to close
+                  </p>
+                </div>
+              ))}
+            </div>
+            {careerPaths[0] && (
+              <p className="mt-3 text-sm text-[var(--text-light)]">
+                You may still be well-positioned for your top match — {careerPaths[0].title} ({careerPaths[0].matchPercentage}% match).
+              </p>
+            )}
+          </>
         ) : (
           <p className="text-sm text-[var(--text-light)]">No major skill gaps — you're well-positioned for your top match.</p>
         )}
@@ -165,6 +178,12 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {careerPaths.map((path) => {
             const colors = getMatchColorClasses(path.matchPercentage);
+            // Freelance paths are always built from mockFreelanceGigs (no
+            // live freelance data source exists) — always example data,
+            // regardless of jobSource. Job-based paths reuse the same
+            // job.salaryRange as the live/fallback job listings, so they're
+            // real employer data only when jobSource is 'live'.
+            const isEstimateSalary = path.title.startsWith('Freelance:') || jobSource !== 'live';
             return (
               <div
                 key={path.id}
@@ -188,7 +207,10 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
 
                 <div className="mt-auto space-y-1 text-sm">
                   <p className="text-[var(--text-dark)]">
-                    <span className="font-medium">Salary:</span> {path.salaryRange}
+                    <span className="font-medium">
+                      {isEstimateSalary ? 'Estimated salary range (example data):' : 'Salary:'}
+                    </span>{' '}
+                    {path.salaryRange}
                   </p>
                   <p className="text-[var(--text-dark)]">
                     <span className="font-medium">Timeline:</span> {formatTimeline(path.skillGaps)}

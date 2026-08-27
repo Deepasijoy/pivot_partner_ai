@@ -12,8 +12,16 @@ import { useReadinessChecklist, READINESS_CHECKLISTS } from '../hooks/useReadine
 // contribute to this score (Career already has its own real readiness via
 // Career & Income; the others may get their own independent checklists
 // later, but none of them feed this number).
-const RelocationReadiness: React.FC = () => {
-  const { checkedIds, toggleItem, getPercentage } = useReadinessChecklist();
+interface RelocationReadinessProps {
+  // Scopes the checklist's saved progress to this destination — switching
+  // destinations restores that destination's own checklist instead of
+  // carrying over whichever one was last viewed. Checklist item wording
+  // itself remains generic regardless of destination.
+  destination: string;
+}
+
+const RelocationReadiness: React.FC<RelocationReadinessProps> = ({ destination }) => {
+  const { checkedIds, toggleItem, getPercentage } = useReadinessChecklist(destination);
   const [expanded, setExpanded] = useState(true);
 
   const percentage = getPercentage('relocation');

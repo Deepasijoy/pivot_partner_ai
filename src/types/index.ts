@@ -65,6 +65,9 @@ export interface JobOpportunity {
   missingSkills: Skill[];
   description: string;
   employmentMatch: number;
+  // The source listing's real application/redirect URL (e.g. Adzuna's
+  // redirect_url), passed through unmodified. Absent for mock/example jobs.
+  applyUrl?: string;
 }
 
 export interface FreelanceGig {
@@ -141,6 +144,9 @@ export interface CareerRecommendation {
   missingSkills: Skill[];
   matchedSkills: Skill[];
   recommendedAction: string;
+  // Same passthrough as JobOpportunity.applyUrl — absent for mock/example
+  // recommendations.
+  applyUrl?: string;
 }
 
 export interface CopilotMessage {
@@ -152,6 +158,28 @@ export interface CopilotMessage {
   // (e.g. a button guiding the user to the resume parser). Absent for
   // ordinary Groq-answered messages.
   action?: 'open-resume-parser';
+}
+
+// User-set refinements for the Housing resource-link search (Life Setup ->
+// HousingResources). Every field is optional and additive to the resolved
+// destination — these only change the text of the external Google
+// Search/Maps queries built in destinationResourceService.ts, never a
+// listings API or ranking system.
+export interface HousingFilters {
+  // Neighbourhood/area refinement within the resolved destination (e.g.
+  // "Alfama") — distinct from the top-level destination field, which is
+  // city/country level.
+  area?: string;
+  // Monthly budget ceiling. Currency-neutral by design — the app has no
+  // reliable per-destination currency mapping for arbitrary worldwide
+  // locations (currencyConfig in services/config.ts only covers a small,
+  // unrelated fixed set of finance-scenario cities), so no symbol or
+  // conversion is applied.
+  budgetMax?: number;
+  bedrooms?: string;
+  propertyType?: string;
+  furnished?: 'any' | 'furnished' | 'unfurnished';
+  familyFriendly?: boolean;
 }
 
 // The app's top-level navigation state: the four pillars, plus the

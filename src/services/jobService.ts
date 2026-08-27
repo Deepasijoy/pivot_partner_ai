@@ -1,6 +1,8 @@
 import type { JobOpportunity, Skill } from '../types'
 import { mockRemoteJobs, mockSkillTaxonomy } from './mockData'
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+
 interface AdzunaJob {
   id: string | number
   title: string
@@ -47,7 +49,7 @@ function formatSalary(job: AdzunaJob): string {
     return `Up to ${job.salary_max}`
   }
 
-  return 'Salary not listed'
+  return 'Salary not specified by employer'
 }
 
 function mapAdzunaJob(job: AdzunaJob): JobOpportunity {
@@ -66,6 +68,7 @@ function mapAdzunaJob(job: AdzunaJob): JobOpportunity {
     missingSkills: requiredSkills,
     description: job.description || '',
     employmentMatch: 0,
+    applyUrl: job.redirect_url,
   }
 }
 
@@ -81,7 +84,12 @@ export interface JobFetchResult {
   reason?: string
 }
 
-function fallbackResult(reason: string): JobFetchResult {
+// Exported so callers that already know live search can't be attempted for a
+// specific, known reason (e.g. the resolved destination country isn't one of
+// the job-search provider's supported boards) can produce a correctly-tagged
+// fallback result with an honest, specific reason — without duplicating the
+// mock-fallback shape here or making a request already known to be rejected.
+export function fallbackResult(reason: string): JobFetchResult {
   console.warn(`Job search using mock fallback jobs: ${reason}`)
   return { jobs: mockRemoteJobs, source: 'fallback', reason }
 }
@@ -115,7 +123,7 @@ export async function loadJobOpportunities({
       params.set('where', where)
     }
 
-    const response = await fetch(`/api/jobs?${params.toString()}`)
+    const response = await fetch(`${API_URL}/api/jobs?${params.toString()}`)
 
     if (!response.ok) {
       return fallbackResult(`Job API returned ${response.status}`)
