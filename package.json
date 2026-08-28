@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node server/server.js"
+    "server": "node server/server.js",
+    "test": "node --test \"server/tests/*.test.js\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.4",
