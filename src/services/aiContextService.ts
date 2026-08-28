@@ -1,5 +1,6 @@
 import type { PreferredWorkModel, ResumeProfile, WorkModel } from '../types';
 import type { JobFetchResult } from './jobService';
+import { jobsForCareerGuidance } from './jobService';
 import { getCareerRecommendations } from './recommendationService';
 import { generateCareerPaths, matchJobsForUser } from './matchingService';
 
@@ -55,12 +56,17 @@ export function buildAiContext(input: AiContextInput): string {
     const sourceLabel =
       careerJobs.source === 'live'
         ? 'LIVE — these are real, currently available opportunities.'
-        : `EXAMPLE/SAMPLE — live job search is currently unavailable${
-            careerJobs.reason ? ` (${careerJobs.reason})` : ''
-          }. These are illustrative only. Do NOT present them as real, currently open vacancies.`;
+        : careerJobs.source === 'empty'
+          ? `EXAMPLE/SAMPLE — the live search completed but found no matching listings${
+              careerJobs.reason ? ` (${careerJobs.reason})` : ''
+            }. These are illustrative only. Do NOT present them as real, currently open vacancies.`
+          : `EXAMPLE/SAMPLE — live job search is currently unavailable${
+              careerJobs.reason ? ` (${careerJobs.reason})` : ''
+            }. These are illustrative only. Do NOT present them as real, currently open vacancies.`;
     jobLines.push(`Source: ${sourceLabel}`);
 
-    const recommendations = getCareerRecommendations(profile, { jobs: careerJobs.jobs, limit: 3 });
+    const guidanceJobs = jobsForCareerGuidance(careerJobs.jobs);
+    const recommendations = getCareerRecommendations(profile, { jobs: guidanceJobs, limit: 3 });
     for (const rec of recommendations) {
       const matched = rec.matchedSkills.map((skill) => skill.name).join(', ') || 'none yet';
       const missing = rec.missingSkills.map((skill) => skill.name).join(', ') || 'no major gaps';
@@ -71,7 +77,7 @@ export function buildAiContext(input: AiContextInput): string {
       );
     }
 
-    const matchedJobs = matchJobsForUser(profile.skills, careerJobs.jobs);
+    const matchedJobs = matchJobsForUser(profile.skills, guidanceJobs);
     const paths = generateCareerPaths(profile.skills, matchedJobs).slice(0, 2);
     for (const path of paths) {
       const gaps = path.skillGaps.map((gap) => gap.skill.name).join(', ') || 'none';

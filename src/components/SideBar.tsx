@@ -1,4 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import type { Components } from 'react-markdown';
 import type { CopilotMessage } from '../types';
 import {
   Send,
@@ -11,6 +14,41 @@ import {
   Compass,
   ListChecks,
 } from 'lucide-react';
+
+// Renders assistant messages (which arrive as Markdown from the Groq model)
+// as actual formatted content instead of raw text, so escape sequences like
+// `\|`, `\*`, `\---` and literal `**bold**`/`# heading` syntax don't leak
+// into the chat bubble. Styling matches the existing bubble's text-sm
+// leading-relaxed look rather than introducing a new visual language.
+const markdownComponents: Components = {
+  p: ({ children }) => <p className="mb-2 break-words last:mb-0">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  h1: ({ children }) => <h1 className="mb-2 mt-1 text-base font-bold first:mt-0">{children}</h1>,
+  h2: ({ children }) => <h2 className="mb-1.5 mt-3 text-sm font-bold first:mt-0">{children}</h2>,
+  h3: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-semibold first:mt-0">{children}</h3>,
+  ul: ({ children }) => <ul className="mb-2 ml-4 list-disc space-y-1 last:mb-0">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-2 ml-4 list-decimal space-y-1 last:mb-0">{children}</ol>,
+  li: ({ children }) => <li className="break-words">{children}</li>,
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="underline">
+      {children}
+    </a>
+  ),
+  code: ({ children }) => (
+    <code className="rounded bg-black/10 px-1 py-0.5 text-xs">{children}</code>
+  ),
+  hr: () => <hr className="my-2 border-current/20" />,
+  table: ({ children }) => (
+    <div className="mb-2 overflow-x-auto last:mb-0">
+      <table className="min-w-full border-collapse text-xs">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="border-b border-current/20">{children}</thead>,
+  tr: ({ children }) => <tr className="border-b border-current/10">{children}</tr>,
+  th: ({ children }) => <th className="px-2 py-1 text-left font-semibold">{children}</th>,
+  td: ({ children }) => <td className="px-2 py-1 align-top">{children}</td>,
+};
 
 interface SidebarProps {
   messages: CopilotMessage[];
@@ -167,7 +205,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                     : undefined
                 }
               >
-                <p className="break-words whitespace-pre-wrap">{msg.content}</p>
+                {msg.role === 'assistant' ? (
+                  <div className="break-words">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="break-words whitespace-pre-wrap">{msg.content}</p>
+                )}
 
                 {msg.role === 'assistant' && msg.action === 'open-resume-parser' && (
                   <button

@@ -78,20 +78,52 @@ export interface JobFetchParams {
   country?: string
 }
 
+// 'live' — real Adzuna results. 'empty' — the search completed but found
+// zero usable listings (a valid, honest outcome, not a failure). 'error' —
+// the search could not be completed at all (network/API failure, or
+// couldn't even be attempted — no destination, unsupported country). UI
+// code must not conflate 'empty' and 'error': they mean different things to
+// the user ("nothing live right now" vs. "we couldn't check right now").
+export type JobFetchSource = 'live' | 'empty' | 'error'
+
 export interface JobFetchResult {
   jobs: JobOpportunity[]
-  source: 'live' | 'fallback'
+  source: JobFetchSource
   reason?: string
 }
 
-// Exported so callers that already know live search can't be attempted for a
-// specific, known reason (e.g. the resolved destination country isn't one of
-// the job-search provider's supported boards) can produce a correctly-tagged
-// fallback result with an honest, specific reason — without duplicating the
-// mock-fallback shape here or making a request already known to be rejected.
-export function fallbackResult(reason: string): JobFetchResult {
-  console.warn(`Job search using mock fallback jobs: ${reason}`)
-  return { jobs: mockRemoteJobs, source: 'fallback', reason }
+// A confirmed zero-result outcome. Never carries mock jobs — an empty
+// `jobs` array here is the honest signal "we searched live and found
+// nothing," not "here are some jobs to show instead." Callers that want a
+// mock substrate for *career guidance* (skill gaps, courses, career paths —
+// never presented as real listings) use jobsForCareerGuidance() below, on
+// purpose, at the point they need it — never baked into the fetch result
+// itself, so "zero live results" and "here's example data" can never be
+// confused with each other in the data.
+export function emptyResult(reason: string): JobFetchResult {
+  return { jobs: [], source: 'empty', reason }
+}
+
+// The search itself could not be completed — network/API failure, or a
+// precondition that made the attempt itself impossible (no destination
+// resolved, or the destination's country isn't supported by the job-search
+// provider). Distinct from emptyResult: this means live availability is
+// simply unknown, not that we confirmed there's nothing live.
+export function errorResult(reason: string): JobFetchResult {
+  console.warn(`Live job search unavailable: ${reason}`)
+  return { jobs: [], source: 'error', reason }
+}
+
+// Career/skill guidance (Skill Gaps, Recommended Courses, Career Paths, the
+// Remote section's own example cards) must keep working even with zero live
+// listings — it has always used mockRemoteJobs as a scoring substrate when
+// no real jobs are available. This centralizes that "use mock data only for
+// guidance, never as a live listing" policy in one place, since `jobs` can
+// now legitimately be a real empty array (not just `undefined`) coming back
+// from emptyResult/errorResult above — plain default-parameter fallbacks
+// (`= mockRemoteJobs`) don't trigger on an empty array, only on `undefined`.
+export function jobsForCareerGuidance(jobs: JobOpportunity[] | undefined | null): JobOpportunity[] {
+  return jobs && jobs.length > 0 ? jobs : mockRemoteJobs
 }
 
 /**
@@ -109,11 +141,11 @@ export async function loadJobOpportunities({
   country,
 }: JobFetchParams): Promise<JobFetchResult> {
   if (!what || !what.trim()) {
-    return fallbackResult('No job-search query was provided.')
+    return errorResult('No job-search query was provided.')
   }
 
   if (!country || !country.trim()) {
-    return fallbackResult('No resolved destination country was provided for the search.')
+    return errorResult('No resolved destination country was provided for the search.')
   }
 
   try {
@@ -126,18 +158,18 @@ export async function loadJobOpportunities({
     const response = await fetch(`${API_URL}/api/jobs?${params.toString()}`)
 
     if (!response.ok) {
-      return fallbackResult(`Job API returned ${response.status}`)
+      return errorResult(`Job API returned ${response.status}`)
     }
 
     const data: AdzunaResponse = await response.json()
 
     if (!data.results || data.results.length === 0) {
-      return fallbackResult('Adzuna returned no usable jobs for this search.')
+      return emptyResult('Adzuna returned no usable jobs for this search.')
     }
 
     return { jobs: data.results.map(mapAdzunaJob), source: 'live' }
   } catch (error) {
-    return fallbackResult(error instanceof Error ? error.message : 'Live Adzuna job search failed.')
+    return errorResult(error instanceof Error ? error.message : 'Live Adzuna job search failed.')
   }
 }
 

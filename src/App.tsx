@@ -12,6 +12,7 @@ import CommunityResources from './components/CommunityResources'
 import { useGroqChat } from './hooks/useGroqChat'
 import { isActionableJobIntent, isActionableRelocationIntent } from './utils/jobIntentDetection'
 import type { JobFetchResult } from './services/jobService'
+import { jobsForCareerGuidance } from './services/jobService'
 import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
 import { buildAiContext } from './services/aiContextService'
 import { useAuth } from './contexts/AuthContext'
@@ -67,6 +68,12 @@ function App() {
   // handleJobsResolved below) — reset per new resume in handleProfileParsed
   // so re-uploading a different resume gets its own follow-up message.
   const careerAnalysisSent = useRef(false)
+  // The actual scrollable element for pillar tab content (see the
+  // overflow-y-auto div below) — passed down so JobMatcherTab's "Analyze
+  // Skill Gap" action can scroll it directly via scrollTo/scrollTop instead
+  // of relying on scrollIntoView, which doesn't reliably reach through the
+  // overflow-hidden flex wrappers around it in this layout.
+  const careerScrollContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const state = location.state as { initialPrompt?: string } | null
@@ -95,7 +102,7 @@ function App() {
 
     if (!parsedProfile || careerAnalysisSent.current) return
 
-    const matchedJobs = matchJobsForUser(parsedProfile.skills, result.jobs)
+    const matchedJobs = matchJobsForUser(parsedProfile.skills, jobsForCareerGuidance(result.jobs))
     const paths = generateCareerPaths(parsedProfile.skills, matchedJobs)
     const topPath = paths[0]
     if (!topPath) return
@@ -454,7 +461,7 @@ Your career can travel with you.`,
 
           <TabNavigation activeTab={activeTab as PillarTab} onTabChange={goToPillar} />
 
-          <div className="flex-1 overflow-y-auto">
+          <div ref={careerScrollContainerRef} className="flex-1 overflow-y-auto">
             {/* ============================== */}
             {/* MAIN DASHBOARD (default view) */}
             {/* ============================== */}
@@ -603,6 +610,7 @@ Your career can travel with you.`,
                 onSendPrompt={sendPrompt}
                 destination={destination}
                 onJobsResolved={handleJobsResolved}
+                scrollContainerRef={careerScrollContainerRef}
               />
             )}
 

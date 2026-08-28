@@ -2,19 +2,22 @@ import React, { useEffect, useState } from 'react';
 import type { ResumeProfile, SkillGap, CourseRecommendation, CareerPath, JobOpportunity } from '../types';
 import { recommendCourses } from '../services/skillAnalysisService';
 import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from '../services/matchingService';
+import { jobsForCareerGuidance, type JobFetchSource } from '../services/jobService';
 import { AlertCircle, TrendingUp, BookOpen } from 'lucide-react';
 
 interface SkillAnalysisProps {
   profile: ResumeProfile;
   onCareerPathsGenerated?: (paths: CareerPath[]) => void;
-  // The canonical job-fetch result owned by JobMatcherTab — the same array
-  // CareerRecommendations receives, so both always agree. Optional so this
-  // still works if a parent hasn't wired it in yet — matchJobsForUser()
-  // falls back to its own mock default in that case, exactly as before.
+  // The "best available" job-fetch result owned by JobMatcherTab — the same
+  // data CareerProfile receives. Optional so this still works if a parent
+  // hasn't wired it in yet. Skill Gaps/Courses/Career Paths below must keep
+  // working even when this is empty/errored — see jobsForCareerGuidance().
   jobs?: JobOpportunity[];
-  // Whether `jobs` above is live Adzuna data or the mock fallback — every
-  // section below (match score, skill gaps, career paths) derives from it.
-  jobSource?: 'live' | 'fallback';
+  // Whether `jobs` above is live Adzuna data, a confirmed-empty live
+  // result, or an error — the match-score/opportunity labeling below
+  // derives from it, but the guidance itself (skill gaps, courses, career
+  // paths) never depends on it being 'live'.
+  jobSource?: JobFetchSource;
   jobReason?: string;
 }
 
@@ -45,13 +48,21 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
   const [recommendedCourses, setRecommendedCourses] = useState<CourseRecommendation[]>([]);
   const [careerPaths, setCareerPaths] = useState<CareerPath[]>([]);
   const [matchScore, setMatchScore] = useState<number>(0);
+  // Which Career Path card (if any) is expanded to reveal its skills/next
+  // step — same click-to-expand pattern CareerRecommendations already uses
+  // for its own cards, applied here since that data (path.skillGaps,
+  // path.recommendedAction) already exists but wasn't being shown.
+  const [expandedPathId, setExpandedPathId] = useState<string | null>(null);
 
-  // No independent fetch here anymore — jobs (live-or-fallback, tagged
-  // upstream by JobMatcherTab) arrive as a prop, so this is now a plain
-  // synchronous derivation. Re-runs when the prop updates, e.g. once
-  // JobMatcherTab's own fetch resolves after the initial render.
+  // No independent fetch here anymore — jobs (live, or a genuinely
+  // empty/errored result, tagged upstream by JobMatcherTab) arrive as a
+  // prop, so this is now a plain synchronous derivation. Re-runs when the
+  // prop updates, e.g. once JobMatcherTab's own fetch resolves after the
+  // initial render. jobsForCareerGuidance() supplies the existing mock
+  // substrate whenever `jobs` is empty/undefined, so this guidance keeps
+  // working with zero live listings — exactly as it always has.
   useEffect(() => {
-    const matchedJobs = matchJobsForUser(profile.skills, jobs);
+    const matchedJobs = matchJobsForUser(profile.skills, jobsForCareerGuidance(jobs));
     const paths = generateCareerPaths(profile.skills, matchedJobs);
     // Overall, profile-level gaps: the union of every generated career
     // path's own skill gaps (each already computed by calculateSkillGaps
@@ -88,9 +99,13 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
                   ? { backgroundColor: 'var(--primary-light)', color: 'var(--primary-dark)' }
                   : { backgroundColor: 'var(--surface)', color: 'var(--text-light)' }
               }
-              title={jobSource === 'fallback' ? jobReason : undefined}
+              title={jobSource !== 'live' ? jobReason : undefined}
             >
-              {jobSource === 'live' ? 'Live opportunities' : 'Example opportunities — live search unavailable'}
+              {jobSource === 'live'
+                ? 'Live opportunities'
+                : jobSource === 'empty'
+                  ? 'Example opportunities — no live listings found'
+                  : 'Example opportunities — live search unavailable'}
             </span>
           )}
         </div>
@@ -184,10 +199,12 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
             // job.salaryRange as the live/fallback job listings, so they're
             // real employer data only when jobSource is 'live'.
             const isEstimateSalary = path.title.startsWith('Freelance:') || jobSource !== 'live';
+            const isExpanded = expandedPathId === path.id;
             return (
               <div
                 key={path.id}
-                className="rounded-lg border border-[var(--border-light)] bg-[var(--surface)] p-5 shadow-sm flex flex-col gap-3"
+                onClick={() => setExpandedPathId(isExpanded ? null : path.id)}
+                className="cursor-pointer rounded-lg border border-[var(--border-light)] bg-[var(--surface)] p-5 shadow-sm flex flex-col gap-3"
               >
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-semibold text-[var(--text-dark)]">{path.title}</h3>
@@ -216,6 +233,37 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
                     <span className="font-medium">Timeline:</span> {formatTimeline(path.skillGaps)}
                   </p>
                 </div>
+
+                {isExpanded && (
+                  <div className="space-y-3 border-t border-[var(--border-light)] pt-3">
+                    {path.skillGaps.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-[var(--text-light)] uppercase tracking-wider mb-2">
+                          Skills to Develop
+                        </p>
+                        <div className="space-y-2">
+                          {path.skillGaps.map((gap) => (
+                            <div
+                              key={gap.skill.name}
+                              className="rounded-lg border border-[var(--border-light)] bg-[var(--bg-light)] px-3 py-2"
+                            >
+                              <p className="text-sm font-medium text-[var(--text-dark)]">{gap.skill.name}</p>
+                              <p className="text-xs text-[var(--text-light)]">
+                                Est. {gap.estimatedTimeWeeks} {gap.estimatedTimeWeeks === 1 ? 'week' : 'weeks'} to close
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-xs font-semibold text-[var(--text-light)] uppercase tracking-wider mb-1">
+                        Next Step
+                      </p>
+                      <p className="text-sm text-[var(--text-dark)]">{path.recommendedAction}</p>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

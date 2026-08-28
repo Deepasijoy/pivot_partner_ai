@@ -1,17 +1,16 @@
 import React from 'react';
 import type { ResumeProfile, JobOpportunity } from '../types';
 import { getCareerRecommendations, deriveSeniority, splitSkillsByTransferability } from '../services/recommendationService';
+import { jobsForCareerGuidance, type JobFetchSource } from '../services/jobService';
 
 interface CareerProfileProps {
   profile: ResumeProfile;
-  // The canonical job-fetch result (live Adzuna jobs, or the tagged mock
-  // fallback) — same data CareerRecommendations/SkillAnalysis already use,
-  // so "Suggested Role"/"Market Fit" reflects the same dataset instead of
-  // silently defaulting to mock jobs. Optional so this still works if a
-  // parent hasn't wired it in yet — getCareerRecommendations() falls back
-  // to its own mock default in that case, exactly as it already did before.
+  // The "best available" job-fetch result (live Adzuna jobs, or a genuinely
+  // empty/errored result) — same data SkillAnalysis uses, so "Suggested
+  // Role"/"Market Fit" reflects the same dataset. Optional so this still
+  // works if a parent hasn't wired it in yet.
   jobs?: JobOpportunity[];
-  jobSource?: 'live' | 'fallback';
+  jobSource?: JobFetchSource;
   jobReason?: string;
 }
 
@@ -22,7 +21,7 @@ function getFitColor(score: number): string {
 }
 
 const CareerProfile: React.FC<CareerProfileProps> = ({ profile, jobs, jobSource, jobReason }) => {
-  const [topRecommendation] = getCareerRecommendations(profile, jobs ? { jobs, limit: 1 } : { limit: 1 });
+  const [topRecommendation] = getCareerRecommendations(profile, { jobs: jobsForCareerGuidance(jobs), limit: 1 });
   const { coreSkills, transferableSkills } = splitSkillsByTransferability(profile.skills);
   const seniority = deriveSeniority(profile.yearsExperience);
   const marketFit = topRecommendation?.matchScore ?? 0;
@@ -36,9 +35,13 @@ const CareerProfile: React.FC<CareerProfileProps> = ({ profile, jobs, jobSource,
           {jobSource && (
             <span
               className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-white/20 text-white"
-              title={jobSource === 'fallback' ? jobReason : undefined}
+              title={jobSource !== 'live' ? jobReason : undefined}
             >
-              {jobSource === 'live' ? 'Live opportunities' : 'Example opportunities — live search unavailable'}
+              {jobSource === 'live'
+                ? 'Live opportunities'
+                : jobSource === 'empty'
+                  ? 'Example opportunities — no live listings found'
+                  : 'Example opportunities — live search unavailable'}
             </span>
           )}
         </div>

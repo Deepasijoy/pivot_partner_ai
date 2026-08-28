@@ -1,13 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ResumeProfile, WorkModel } from '../types';
 import ResumeUploader from './ResumeUploader';
 import CareerProfile from './CareerProfile';
 import CareerRecommendations from './CareerRecommendations';
 import SkillAnalysis from './SkillAnalysis';
 import WorkModelSelector from './WorkModelSelector';
-import { resolveDestination, isAdzunaSupportedCountry } from '../services/locationService';
+import { resolveDestination, isAdzunaSupportedCountry, type ResolvedLocation } from '../services/locationService';
 import { deriveJobQuery } from '../services/jobQueryService';
-import { loadJobOpportunities, fallbackResult, type JobFetchResult } from '../services/jobService';
+import { loadJobOpportunities, errorResult, type JobFetchResult } from '../services/jobService';
 
 interface JobMatcherTabProps {
   onProfileParsed?: (profile: ResumeProfile) => void;
@@ -19,16 +19,79 @@ interface JobMatcherTabProps {
   // a second fetch or any new scoring; App.tsx only ever receives the
   // same result already passed to CareerRecommendations/SkillAnalysis.
   onJobsResolved?: (result: JobFetchResult, workModels: WorkModel[]) => void;
+  // The actual scrollable element for this tab's content (App.tsx's
+  // overflow-y-auto pillar-content div). Used by "Analyze Skill Gap" to
+  // scroll directly via scrollTo/scrollTop — scrollIntoView() alone doesn't
+  // reliably reach through the overflow-hidden flex wrappers around it.
+  scrollContainerRef?: React.RefObject<HTMLDivElement>;
 }
 
-const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPrompt, destination, onJobsResolved }) => {
+const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
+  onProfileParsed,
+  onSendPrompt,
+  destination,
+  onJobsResolved,
+  scrollContainerRef,
+}) => {
   const [parsedProfile, setParsedProfile] = useState<ResumeProfile | null>(null);
   const [workModels, setWorkModels] = useState<WorkModel[]>([]);
-  // The single canonical job-fetch result for this screen. Not yet consumed
-  // by any child component — a later step wires this into
-  // CareerRecommendations and SkillAnalysis so both always agree.
-  const [jobResult, setJobResult] = useState<JobFetchResult | null>(null);
-  const [jobsLoading, setJobsLoading] = useState(false);
+
+  // Local and Remote each get their own independent search state, so a
+  // Local result (empty, error, whatever) can never affect Remote's, and
+  // vice versa. Each is only fetched while its work model is selected.
+  // Freelance has no live data source at all (see CareerRecommendations.tsx
+  // — Adzuna has no reliable freelance signal), so it needs no fetch state
+  // here; its section already renders independently of any of this.
+  const [localJobResult, setLocalJobResult] = useState<JobFetchResult | null>(null);
+  const [localJobsLoading, setLocalJobsLoading] = useState(false);
+  const [remoteJobResult, setRemoteJobResult] = useState<JobFetchResult | null>(null);
+  const [remoteJobsLoading, setRemoteJobsLoading] = useState(false);
+
+  // Destination resolution (geocoding) is shared — where someone is moving
+  // to doesn't depend on which work models they picked, so this runs once
+  // and both searches below reuse it rather than each geocoding separately.
+  const [resolvedLocation, setResolvedLocation] = useState<ResolvedLocation | null>(null);
+
+  // The single "best" result for consumers that only want one overall
+  // picture (CareerProfile's hero, SkillAnalysis's scoring, and the
+  // existing onJobsResolved AI-context callback) rather than a Local-vs-
+  // Remote breakdown — prefers live data from either search.
+  const primaryJobResult: JobFetchResult | null =
+    localJobResult?.source === 'live'
+      ? localJobResult
+      : remoteJobResult?.source === 'live'
+        ? remoteJobResult
+        : localJobResult ?? remoteJobResult ?? null;
+
+  // Lets "Analyze Skill Gap" (in CareerRecommendations) scroll the user down
+  // to the existing Tier 3 skill-analysis section below, instead of
+  // triggering any new analysis or AI request.
+  const skillAnalysisRef = useRef<HTMLDivElement>(null);
+  const scrollToSkillAnalysis = () => {
+    const target = skillAnalysisRef.current;
+    if (!target) return;
+
+    const container = scrollContainerRef?.current;
+    if (!container) {
+      // No container ref available (e.g. a caller that doesn't pass one) —
+      // fall back to the browser's own ancestor-scrolling behavior.
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    // Compute the target's offset within the container directly and scroll
+    // the container itself. scrollIntoView() asks the browser to walk up
+    // and scroll whichever ancestor scrolling boxes it thinks are needed —
+    // in this layout, the intermediate flex wrappers around the container
+    // are `overflow-hidden`, which also count as scrolling boxes, and in
+    // testing the browser did not end up moving the actual overflow-y-auto
+    // container's scrollTop. Scrolling that container explicitly sidesteps
+    // the ambiguity.
+    const offsetWithinContainer =
+      target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+
+    container.scrollTo({ top: offsetWithinContainer, behavior: 'smooth' });
+  };
 
   const handleProfileParsed = (profile: ResumeProfile) => {
     setParsedProfile(profile);
@@ -38,84 +101,170 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
   const handleReset = () => {
     setParsedProfile(null);
     setWorkModels([]);
-    setJobResult(null);
+    setLocalJobResult(null);
+    setRemoteJobResult(null);
+    setResolvedLocation(null);
   };
 
-  // The ONE job fetch for this screen, owned here. Triggered once a profile
-  // exists and the user has chosen a work model — the same point the
-  // results view below renders. Resolves the destination, derives a
-  // profile-driven search query (never a hard-coded title), and loads
-  // live-or-fallback jobs via the single canonical pipeline.
+  // Resolve the destination once, shared by both searches below.
   useEffect(() => {
     if (!parsedProfile || workModels.length === 0) {
-      setJobResult(null);
+      setResolvedLocation(null);
       return;
     }
 
     let cancelled = false;
 
-    const loadJobs = async () => {
-      setJobsLoading(true);
+    resolveDestination(destination ?? '').then((location) => {
+      if (!cancelled) setResolvedLocation(location);
+    });
 
-      const location = await resolveDestination(destination ?? '');
-      if (cancelled) return;
+    return () => {
+      cancelled = true;
+    };
+  }, [parsedProfile, workModels, destination]);
+
+  // LOCAL search — independent of Remote. Only attempted while 'local' is
+  // selected. Scoped to the resolved destination city/region + country, so
+  // results genuinely match where the user is relocating to (unchanged
+  // query shape from before this fix).
+  useEffect(() => {
+    if (!parsedProfile || !workModels.includes('local') || !resolvedLocation) {
+      setLocalJobResult(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      setLocalJobsLoading(true);
 
       const query = deriveJobQuery(parsedProfile);
-
       let result: JobFetchResult;
-      if (location.countryCode && !location.isRemote && isAdzunaSupportedCountry(location.countryCode)) {
+
+      if (
+        resolvedLocation.countryCode &&
+        !resolvedLocation.isRemote &&
+        isAdzunaSupportedCountry(resolvedLocation.countryCode)
+      ) {
         result = await loadJobOpportunities({
           what: query.primaryQuery,
           // Falls back to the resolved region (e.g. "New Jersey") when no
           // city is available — a state/region-level destination has no
           // city/town/village/county in its resolved address, so `city`
           // alone left the search unfiltered by location entirely.
-          where: location.city || location.region,
-          country: location.countryCode,
+          where: resolvedLocation.city || resolvedLocation.region,
+          country: resolvedLocation.countryCode,
         });
-      } else if (location.countryCode && !location.isRemote && location.countryName) {
+      } else if (resolvedLocation.countryCode && !resolvedLocation.isRemote && resolvedLocation.countryName) {
         // Country resolved, but it isn't one of the job-search provider's
         // supported boards — skip the live call (already known to be
-        // rejected) and say so specifically, rather than the generic
-        // "no destination country" reason or implying no remote jobs exist.
-        result = fallbackResult(
-          `Live job listings for ${location.countryName} aren't currently supported by our job-search provider.`
+        // rejected) and say so specifically.
+        result = errorResult(
+          `Live job listings for ${resolvedLocation.countryName} aren't currently supported by our job-search provider.`
         );
       } else {
-        // Truly unresolved/ambiguous, or remote — no country name to
-        // reference; loadJobOpportunities still returns the correctly
-        // tagged fallback result with its own generic reason.
-        result = await loadJobOpportunities({ what: query.primaryQuery });
+        // Truly unresolved/ambiguous, or remote — no country to search a
+        // local market in at all.
+        result = errorResult('No resolved destination country was provided for the search.');
       }
 
       if (!cancelled) {
-        setJobResult(result);
-        setJobsLoading(false);
-        onJobsResolved?.(result, workModels);
+        setLocalJobResult(result);
+        setLocalJobsLoading(false);
       }
     };
 
-    loadJobs();
+    run();
 
     return () => {
       cancelled = true;
     };
-  }, [parsedProfile, workModels, destination, onJobsResolved]);
+  }, [parsedProfile, workModels, resolvedLocation]);
 
-  // Temporary verification aid for this step — Steps 7-9 will replace this
-  // with real consumption (props into CareerRecommendations/SkillAnalysis,
-  // plus the live/mock UI label). Confirms the single fetch is happening
-  // and what it produced, without rendering anything yet.
+  // REMOTE search — independent of Local. Uses the same resolved country
+  // (Adzuna's API is inherently country-scoped — there is no borderless
+  // "remote" endpoint) but deliberately WITHOUT the city/region `where`
+  // constraint, so it's a genuinely broader, separate query rather than a
+  // relabeled copy of Local's narrower result — a Local-specific empty
+  // result or failure can never affect this one.
   useEffect(() => {
-    if (jobsLoading) {
-      console.debug('[JobMatcherTab] loading job opportunities…');
-    } else if (jobResult) {
+    if (!parsedProfile || !workModels.includes('remote') || !resolvedLocation) {
+      setRemoteJobResult(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      setRemoteJobsLoading(true);
+
+      const query = deriveJobQuery(parsedProfile);
+      let result: JobFetchResult;
+
+      if (
+        resolvedLocation.countryCode &&
+        !resolvedLocation.isRemote &&
+        isAdzunaSupportedCountry(resolvedLocation.countryCode)
+      ) {
+        result = await loadJobOpportunities({
+          what: query.primaryQuery,
+          country: resolvedLocation.countryCode,
+        });
+      } else if (resolvedLocation.countryCode && !resolvedLocation.isRemote && resolvedLocation.countryName) {
+        result = errorResult(
+          `Live job listings for ${resolvedLocation.countryName} aren't currently supported by our job-search provider.`
+        );
+      } else {
+        result = errorResult('No resolved destination country was provided for the search.');
+      }
+
+      if (!cancelled) {
+        setRemoteJobResult(result);
+        setRemoteJobsLoading(false);
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [parsedProfile, workModels, resolvedLocation]);
+
+  // Reports the single "best" result up to App.tsx for AI context — same
+  // callback contract as before (one JobFetchResult + the selected work
+  // models), just now recomputed whenever either independent search
+  // resolves, rather than there being only one search to report.
+  useEffect(() => {
+    if (primaryJobResult) {
+      onJobsResolved?.(primaryJobResult, workModels);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryJobResult]);
+
+  // Verification aid — confirms each independent fetch's own outcome.
+  useEffect(() => {
+    if (localJobsLoading) {
+      console.debug('[JobMatcherTab] loading Local opportunities…');
+    } else if (localJobResult) {
       console.debug(
-        `[JobMatcherTab] job fetch complete — source: ${jobResult.source}, jobs: ${jobResult.jobs.length}` +
-          (jobResult.reason ? `, reason: ${jobResult.reason}` : '')
+        `[JobMatcherTab] Local fetch complete — source: ${localJobResult.source}, jobs: ${localJobResult.jobs.length}` +
+          (localJobResult.reason ? `, reason: ${localJobResult.reason}` : '')
       );
     }
-  }, [jobResult, jobsLoading]);
+  }, [localJobResult, localJobsLoading]);
+
+  useEffect(() => {
+    if (remoteJobsLoading) {
+      console.debug('[JobMatcherTab] loading Remote opportunities…');
+    } else if (remoteJobResult) {
+      console.debug(
+        `[JobMatcherTab] Remote fetch complete — source: ${remoteJobResult.source}, jobs: ${remoteJobResult.jobs.length}` +
+          (remoteJobResult.reason ? `, reason: ${remoteJobResult.reason}` : '')
+      );
+    }
+  }, [remoteJobResult, remoteJobsLoading]);
 
   return (
     <div className="space-y-8 p-6">
@@ -147,9 +296,9 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
           <section>
             <CareerProfile
               profile={parsedProfile}
-              jobs={jobResult?.jobs}
-              jobSource={jobResult?.source}
-              jobReason={jobResult?.reason}
+              jobs={primaryJobResult?.jobs}
+              jobSource={primaryJobResult?.source}
+              jobReason={primaryJobResult?.reason}
             />
           </section>
 
@@ -171,22 +320,30 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({ onProfileParsed, onSendPr
               profile={parsedProfile}
               workModels={workModels}
               onSendPrompt={onSendPrompt}
-              jobs={jobResult?.jobs}
-              jobSource={jobResult?.source}
-              jobReason={jobResult?.reason}
+              localJobs={localJobResult?.jobs}
+              localJobSource={localJobResult?.source}
+              localJobReason={localJobResult?.reason}
+              localJobsLoading={localJobsLoading}
+              remoteJobs={remoteJobResult?.jobs}
+              remoteJobSource={remoteJobResult?.source}
+              remoteJobReason={remoteJobResult?.reason}
+              remoteJobsLoading={remoteJobsLoading}
+              onAnalyzeSkillGaps={scrollToSkillAnalysis}
+              destinationCountryName={resolvedLocation?.countryName}
             />
           </section>
 
           {/* Tier 3 — skill gap detail */}
           <section
+            ref={skillAnalysisRef}
             className="rounded-lg border p-2 sm:p-4"
             style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface-2)' }}
           >
             <SkillAnalysis
               profile={parsedProfile}
-              jobs={jobResult?.jobs}
-              jobSource={jobResult?.source}
-              jobReason={jobResult?.reason}
+              jobs={primaryJobResult?.jobs}
+              jobSource={primaryJobResult?.source}
+              jobReason={primaryJobResult?.reason}
             />
           </section>
 
