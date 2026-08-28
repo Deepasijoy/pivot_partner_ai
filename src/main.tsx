@@ -10,6 +10,7 @@ import './styles/theme.css'
 // shouldn't have to download the full dashboard.
 const App = lazy(() => import('./App.tsx'))
 const AuthPlaceholder = lazy(() => import('./pages/AuthPlaceholder.tsx'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword.tsx'))
 
 function RouteFallback() {
   return (
@@ -32,6 +33,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/app" element={<App />} />
             <Route path="/login" element={<AuthPlaceholder mode="login" />} />
             <Route path="/get-started" element={<AuthPlaceholder mode="signup" />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
           </Routes>
         </Suspense>
       </AuthProvider>
