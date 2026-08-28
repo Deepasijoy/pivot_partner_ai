@@ -15,6 +15,7 @@ import type { JobFetchResult } from './services/jobService'
 import { jobsForCareerGuidance } from './services/jobService'
 import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
 import { buildAiContext } from './services/aiContextService'
+import { INITIAL_CAREER_SEARCH_STATE, type CareerSearchState } from './components/JobMatcherTab'
 import { useAuth } from './contexts/AuthContext'
 import { Stethoscope, Landmark, GraduationCap, LogOut, MessageCircle, X } from 'lucide-react'
 import './styles/theme.css'
@@ -42,6 +43,16 @@ function App() {
   // not to run a second fetch or duplicate scoring.
   const [careerJobs, setCareerJobs] = useState<JobFetchResult | null>(null)
   const [careerWorkModels, setCareerWorkModels] = useState<WorkModel[]>([])
+  // Everything else Career & Income needs to remember for a visit (selected
+  // work models, resolved destination, Local/Remote search results) —
+  // lifted here so it survives the user navigating to another tab and back.
+  // JobMatcherTab is only rendered while activeTab === 'career' (below), so
+  // it unmounts on every other tab; App itself never does, which is what
+  // actually fixes the "leaving the tab resets everything" bug.
+  const [careerSearchState, setCareerSearchState] = useState<CareerSearchState>(INITIAL_CAREER_SEARCH_STATE)
+  const updateCareerSearchState = useCallback((patch: Partial<CareerSearchState>) => {
+    setCareerSearchState((prev) => ({ ...prev, ...patch }))
+  }, [])
   // "Check work eligibility" AI Priority — toggles a Launching soon notice
   // rather than inventing eligibility information.
   const [showWorkEligibilityNotice, setShowWorkEligibilityNotice] = useState(false)
@@ -376,6 +387,13 @@ Your career can travel with you.`,
     pushMessage(aiMsg)
   }
 
+  // "Upload Different Resume" in Career & Income — clears the profile this
+  // state lives in (see handleProfileParsed above); JobMatcherTab clears its
+  // own lifted search state (work models, job results) itself.
+  const handleResetProfile = () => {
+    setParsedProfile(null)
+  }
+
   return (
     <div className="h-screen flex flex-col" style={{ backgroundColor: 'var(--bg-app)' }}>
       {/* Header */}
@@ -606,7 +624,11 @@ Your career can travel with you.`,
 
             {activeTab === 'career' && (
               <JobMatcherTab
+                parsedProfile={parsedProfile}
                 onProfileParsed={handleProfileParsed}
+                onResetProfile={handleResetProfile}
+                searchState={careerSearchState}
+                onSearchStateChange={updateCareerSearchState}
                 onSendPrompt={sendPrompt}
                 destination={destination}
                 onJobsResolved={handleJobsResolved}

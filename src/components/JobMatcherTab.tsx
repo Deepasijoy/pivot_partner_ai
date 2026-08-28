@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { ResumeProfile, WorkModel } from '../types';
 import ResumeUploader from './ResumeUploader';
 import CareerProfile from './CareerProfile';
@@ -9,8 +9,39 @@ import { resolveDestination, isAdzunaSupportedCountry, type ResolvedLocation } f
 import { deriveJobQuery } from '../services/jobQueryService';
 import { loadJobOpportunities, errorResult, type JobFetchResult } from '../services/jobService';
 
+// Everything Career & Income needs to remember across a visit besides the
+// parsed resume itself (which App.tsx already tracks separately). Lifted to
+// App.tsx and passed in as a controlled prop — App.tsx never unmounts, so
+// this survives the user navigating away to another tab and back, unlike a
+// local useState here (JobMatcherTab itself is unmounted whenever
+// activeTab !== 'career', which previously reset all of this to empty).
+export interface CareerSearchState {
+  workModels: WorkModel[];
+  resolvedLocation: ResolvedLocation | null;
+  localJobResult: JobFetchResult | null;
+  localJobsLoading: boolean;
+  remoteJobResult: JobFetchResult | null;
+  remoteJobsLoading: boolean;
+}
+
+export const INITIAL_CAREER_SEARCH_STATE: CareerSearchState = {
+  workModels: [],
+  resolvedLocation: null,
+  localJobResult: null,
+  localJobsLoading: false,
+  remoteJobResult: null,
+  remoteJobsLoading: false,
+};
+
 interface JobMatcherTabProps {
+  parsedProfile: ResumeProfile | null;
   onProfileParsed?: (profile: ResumeProfile) => void;
+  // Called by "Upload Different Resume" to clear the parent's parsedProfile
+  // (the profile itself lives in App.tsx, not here — see CareerSearchState
+  // above for why).
+  onResetProfile?: () => void;
+  searchState: CareerSearchState;
+  onSearchStateChange: (patch: Partial<CareerSearchState>) => void;
   onSendPrompt?: (text: string) => void;
   destination?: string;
   // Reports the canonical job-fetch result (and the work models it was
@@ -27,30 +58,29 @@ interface JobMatcherTabProps {
 }
 
 const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
+  parsedProfile,
   onProfileParsed,
+  onResetProfile,
+  searchState,
+  onSearchStateChange,
   onSendPrompt,
   destination,
   onJobsResolved,
   scrollContainerRef,
 }) => {
-  const [parsedProfile, setParsedProfile] = useState<ResumeProfile | null>(null);
-  const [workModels, setWorkModels] = useState<WorkModel[]>([]);
-
-  // Local and Remote each get their own independent search state, so a
-  // Local result (empty, error, whatever) can never affect Remote's, and
-  // vice versa. Each is only fetched while its work model is selected.
-  // Freelance has no live data source at all (see CareerRecommendations.tsx
-  // — Adzuna has no reliable freelance signal), so it needs no fetch state
-  // here; its section already renders independently of any of this.
-  const [localJobResult, setLocalJobResult] = useState<JobFetchResult | null>(null);
-  const [localJobsLoading, setLocalJobsLoading] = useState(false);
-  const [remoteJobResult, setRemoteJobResult] = useState<JobFetchResult | null>(null);
-  const [remoteJobsLoading, setRemoteJobsLoading] = useState(false);
-
-  // Destination resolution (geocoding) is shared — where someone is moving
-  // to doesn't depend on which work models they picked, so this runs once
-  // and both searches below reuse it rather than each geocoding separately.
-  const [resolvedLocation, setResolvedLocation] = useState<ResolvedLocation | null>(null);
+  const { workModels, resolvedLocation, localJobResult, localJobsLoading, remoteJobResult, remoteJobsLoading } =
+    searchState;
+  // Thin wrappers with the same call signature as the useState setters they
+  // replace, so every existing call site below (setWorkModels([]),
+  // setLocalJobResult(result), etc.) is unchanged — they just now write to
+  // the lifted parent state instead of a local one that gets wiped on
+  // unmount.
+  const setWorkModels = (workModels: WorkModel[]) => onSearchStateChange({ workModels });
+  const setResolvedLocation = (resolvedLocation: ResolvedLocation | null) => onSearchStateChange({ resolvedLocation });
+  const setLocalJobResult = (localJobResult: JobFetchResult | null) => onSearchStateChange({ localJobResult });
+  const setLocalJobsLoading = (localJobsLoading: boolean) => onSearchStateChange({ localJobsLoading });
+  const setRemoteJobResult = (remoteJobResult: JobFetchResult | null) => onSearchStateChange({ remoteJobResult });
+  const setRemoteJobsLoading = (remoteJobsLoading: boolean) => onSearchStateChange({ remoteJobsLoading });
 
   // The single "best" result for consumers that only want one overall
   // picture (CareerProfile's hero, SkillAnalysis's scoring, and the
@@ -94,16 +124,12 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
   };
 
   const handleProfileParsed = (profile: ResumeProfile) => {
-    setParsedProfile(profile);
     onProfileParsed?.(profile);
   };
 
   const handleReset = () => {
-    setParsedProfile(null);
-    setWorkModels([]);
-    setLocalJobResult(null);
-    setRemoteJobResult(null);
-    setResolvedLocation(null);
+    onResetProfile?.();
+    onSearchStateChange(INITIAL_CAREER_SEARCH_STATE);
   };
 
   // Resolve the destination once, shared by both searches below.
