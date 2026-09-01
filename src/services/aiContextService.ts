@@ -27,6 +27,22 @@ function section(title: string, lines: string[]): string {
   return `${title}:\n${lines.map((line) => `- ${line}`).join('\n')}`;
 }
 
+// Short, non-technical framing for occupationMatchingService.ts's category
+// tag — gives the AI grounded language for the occupation/domain
+// relationship instead of it having to characterize the transition itself.
+function describeOccupationFit(category: string | undefined): string {
+  switch (category) {
+    case 'same_domain':
+      return 'closely matches the candidate\'s stated occupation/domain';
+    case 'adjacent':
+      return 'a plausible transition from the candidate\'s stated occupation/domain';
+    case 'unrelated':
+      return 'outside the candidate\'s stated occupation/domain';
+    default:
+      return 'occupation fit not determined from available evidence';
+  }
+}
+
 export function buildAiContext(input: AiContextInput): string {
   const { origin, destination, moveTiming, workSituation, preferredWorkModel, profile, careerJobs, careerWorkModels } =
     input;
@@ -52,6 +68,7 @@ export function buildAiContext(input: AiContextInput): string {
   if (careerWorkModels.length > 0) workModelLines.push(`Selected in Career & Income: ${careerWorkModels.join(', ')}`);
 
   const jobLines: string[] = [];
+  const evidenceRuleLines: string[] = [];
   if (profile && careerJobs) {
     const sourceLabel =
       careerJobs.source === 'live'
@@ -70,18 +87,34 @@ export function buildAiContext(input: AiContextInput): string {
     for (const rec of recommendations) {
       const matched = rec.matchedSkills.map((skill) => skill.name).join(', ') || 'none yet';
       const missing = rec.missingSkills.map((skill) => skill.name).join(', ') || 'no major gaps';
+      const fitNote = describeOccupationFit(rec.occupationCategory);
       jobLines.push(
-        `${rec.title} at ${rec.company} — ${rec.matchScore}% match, salary ${
+        `${rec.title} at ${rec.company} — ${rec.matchScore}% match (already computed by the app; ${fitNote}), salary ${
           rec.salaryRange || 'not listed'
         }, has: ${matched}, gaps: ${missing}`
       );
     }
 
-    const matchedJobs = matchJobsForUser(profile.skills, guidanceJobs);
-    const paths = generateCareerPaths(profile.skills, matchedJobs).slice(0, 2);
+    const matchedJobs = matchJobsForUser(profile, guidanceJobs);
+    const paths = generateCareerPaths(profile.skills, matchedJobs, profile.likelyRole, profile.industries).slice(0, 2);
     for (const path of paths) {
       const gaps = path.skillGaps.map((gap) => gap.skill.name).join(', ') || 'none';
-      jobLines.push(`Career path "${path.title}": ${path.matchPercentage}% fit, skill gaps: ${gaps}`);
+      const fitNote = describeOccupationFit(path.occupationCategory);
+      jobLines.push(`Career path "${path.title}": ${path.matchPercentage}% fit (already computed by the app; ${fitNote}), skill gaps: ${gaps}`);
+    }
+
+    // Only meaningful once there's real recommendation/path evidence above
+    // to ground against — keeps this instructional block out of contexts
+    // that have nothing for it to apply to.
+    if (recommendations.length > 0 || paths.length > 0) {
+      evidenceRuleLines.push(
+        'Every match percentage, matched skill, missing skill, salary figure, and occupation-fit note above is already computed by the application — use them exactly as given.',
+        'Do not calculate or state a different match percentage than the one given.',
+        'Do not say the candidate has a skill that is not listed under "has:" for that item.',
+        'Do not say a job or career path requires a skill that is not listed under "gaps:" for that item.',
+        'When recommending a course, name only a course already present in the app\'s Recommended Courses section — never invent a course title, platform, price, duration, or certification.',
+        'If something is not covered by the evidence above (e.g. a specific employer\'s interview process, or a salary/skill not listed), say that information is not available rather than guessing.'
+      );
     }
   }
 
@@ -94,6 +127,7 @@ export function buildAiContext(input: AiContextInput): string {
     section('CAREER PROFILE', careerLines),
     section('WORK MODEL', workModelLines),
     section('JOB DATA', jobLines),
+    section('JOB DATA EVIDENCE RULES', evidenceRuleLines),
     section('OTHER PILLARS', pillarLines),
   ].filter((block) => block.length > 0);
 

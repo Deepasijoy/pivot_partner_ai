@@ -22,5 +22,10 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Node test-runner files (node:test / node:assert) are never part of the
+  // Vite app bundle and use Node's ambient types, not this config's
+  // browser/vite-client-only "types" scope — see tsconfig.node.json (or run
+  // `npm test`) for how they're actually type-checked/executed.
+  "exclude": ["src/**/__tests__/**"]
 }

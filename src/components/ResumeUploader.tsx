@@ -52,7 +52,6 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
   setError(null);
   try {
     const profile = await parseResume(file);
-    console.log('📋 Parsed Profile:', profile)  // ← ADD THIS
     setParsedProfile(profile);
     onParsed?.(profile);
   } catch (err) {

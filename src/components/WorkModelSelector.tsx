@@ -7,6 +7,7 @@ interface WorkModelSelectorProps {
 
 const OPTIONS: { id: WorkModel; label: string }[] = [
   { id: 'local', label: 'Local' },
+  { id: 'hybrid', label: 'Hybrid' },
   { id: 'remote', label: 'Remote' },
   { id: 'freelance', label: 'Freelance / Consulting' },
 ];

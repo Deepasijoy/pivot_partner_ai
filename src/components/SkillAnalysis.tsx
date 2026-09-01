@@ -37,9 +37,13 @@ function getBannerAccent(score: number): string {
   return 'var(--status-danger)';
 }
 
-function formatTimeline(skillGaps: SkillGap[]): string {
-  if (skillGaps.length === 0) return 'Ready now';
-  const totalWeeks = skillGaps.reduce((sum, gap) => sum + gap.estimatedTimeWeeks, 0);
+function formatTimeline(path: CareerPath): string {
+  // An empty skillGaps array is NOT evidence of "ready now" when the
+  // underlying listing had no detectable requirements at all — see
+  // matchingService.ts's resolveJobCareerPathState / Step C.
+  if (path.dataState === 'insufficient_data') return 'Requirements not specified';
+  if (path.skillGaps.length === 0) return 'Ready now';
+  const totalWeeks = path.skillGaps.reduce((sum, gap) => sum + gap.estimatedTimeWeeks, 0);
   return `~${totalWeeks} weeks to close skill gaps`;
 }
 
@@ -62,8 +66,8 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
   // substrate whenever `jobs` is empty/undefined, so this guidance keeps
   // working with zero live listings — exactly as it always has.
   useEffect(() => {
-    const matchedJobs = matchJobsForUser(profile.skills, jobsForCareerGuidance(jobs));
-    const paths = generateCareerPaths(profile.skills, matchedJobs);
+    const matchedJobs = matchJobsForUser(profile, jobsForCareerGuidance(jobs));
+    const paths = generateCareerPaths(profile.skills, matchedJobs, profile.likelyRole, profile.industries);
     // Overall, profile-level gaps: the union of every generated career
     // path's own skill gaps (each already computed by calculateSkillGaps
     // inside generateCareerPaths) — not scoped to a single top job, so this
@@ -192,6 +196,23 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
         <h2 className="text-lg font-semibold text-[var(--text-dark)] mb-3">Career Paths</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {careerPaths.map((path) => {
+            if (path.isUnavailable) {
+              // Honest empty state (Step D) — no mock freelance gig is ever
+              // presented as if it were a genuinely evaluated opportunity.
+              // Mirrors CareerRecommendations.tsx's own "Freelance
+              // opportunities are currently unavailable" treatment, kept in
+              // its own card so the grid still shows 3 slots.
+              return (
+                <div
+                  key={path.id}
+                  className="rounded-lg border border-[var(--border-light)] bg-[var(--surface)] p-5 shadow-sm flex flex-col gap-2"
+                >
+                  <h3 className="font-semibold text-[var(--text-dark)]">{path.title}</h3>
+                  <p className="text-sm text-[var(--text-light)]">{path.whyItFits}</p>
+                </div>
+              );
+            }
+
             const colors = getMatchColorClasses(path.matchPercentage);
             // Freelance paths are always built from mockFreelanceGigs (no
             // live freelance data source exists) — always example data,
@@ -230,7 +251,7 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
                     {path.salaryRange}
                   </p>
                   <p className="text-[var(--text-dark)]">
-                    <span className="font-medium">Timeline:</span> {formatTimeline(path.skillGaps)}
+                    <span className="font-medium">Timeline:</span> {formatTimeline(path)}
                   </p>
                 </div>
 

@@ -2,15 +2,19 @@ import React, { useState } from 'react';
 import type { ResumeProfile, PillarTab, PreferredWorkModel } from '../types';
 import { Sparkles, ArrowUpRight, ChevronRight, Globe, Briefcase, Home, Users, MapPin } from 'lucide-react';
 import { QUICK_START_PROMPTS } from '../data/quickStartPrompts';
+import { COUNTRIES } from '../data/countries';
 
 interface DashboardHomeProps {
   origin: string;
-  destination: string;
+  destinationCountryCode: string;
+  destinationCountryName: string;
+  destinationCity: string;
   relocationDate: string;
   workSituation: string;
   preferredWorkModel: PreferredWorkModel | '';
   onOriginChange: (value: string) => void;
-  onDestinationChange: (value: string) => void;
+  onDestinationCountryChange: (code: string, name: string) => void;
+  onDestinationCityChange: (value: string) => void;
   onRelocationDateChange: (value: string) => void;
   onWorkSituationChange: (value: string) => void;
   onPreferredWorkModelChange: (value: PreferredWorkModel) => void;
@@ -104,12 +108,15 @@ function getNextBestAction(origin: string, destination: string, parsedProfile: R
 
 const DashboardHome: React.FC<DashboardHomeProps> = ({
   origin,
-  destination,
+  destinationCountryCode,
+  destinationCountryName,
+  destinationCity,
   relocationDate,
   workSituation,
   preferredWorkModel,
   onOriginChange,
-  onDestinationChange,
+  onDestinationCountryChange,
+  onDestinationCityChange,
   onRelocationDateChange,
   onWorkSituationChange,
   onPreferredWorkModelChange,
@@ -119,6 +126,11 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
   onSendPrompt,
 }) => {
   const [inputValue, setInputValue] = useState('');
+
+  // Derived display string for the Journey status / Next Best Action copy
+  // below, which only ever needed a human-readable place name — the
+  // structured country + city fields are the source of truth.
+  const destination = [destinationCity.trim(), destinationCountryName.trim()].filter(Boolean).join(', ');
 
   const stages = buildStages(origin, destination, parsedProfile);
   const nextAction = getNextBestAction(origin, destination, parsedProfile);
@@ -224,16 +236,33 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
           </div>
 
           <div>
-            <label htmlFor="dashboard-destination" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
+            <label htmlFor="dashboard-destination-country" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
               Destination
             </label>
+            <select
+              id="dashboard-destination-country"
+              value={destinationCountryCode}
+              onChange={(e) => {
+                const code = e.target.value;
+                const country = COUNTRIES.find((c) => c.code === code);
+                onDestinationCountryChange(code, country?.name ?? '');
+              }}
+              className="w-full text-sm"
+            >
+              <option value="">Select a country…</option>
+              {COUNTRIES.map((country) => (
+                <option key={country.code} value={country.code}>
+                  {country.name}
+                </option>
+              ))}
+            </select>
             <input
-              id="dashboard-destination"
+              id="dashboard-destination-city"
               type="text"
-              value={destination}
-              onChange={(e) => onDestinationChange(e.target.value)}
-              placeholder="e.g. Dubai"
-              className="text-sm"
+              value={destinationCity}
+              onChange={(e) => onDestinationCityChange(e.target.value)}
+              placeholder="City or region, e.g. Dubai"
+              className="w-full text-sm mt-1.5"
             />
           </div>
 

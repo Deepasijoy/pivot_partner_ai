@@ -9,7 +9,11 @@ export interface UserProfile {
 
 export interface Skill {
   name: string;
-  category: 'technical' | 'business';
+  // 'general' is for a skill whose technical/business nature genuinely
+  // isn't known (e.g. an unrecognized skill preserved from free text) —
+  // an honest "unclassified," never a guessed technical/business label.
+  // Every taxonomy skill (mockData.ts) still uses only 'technical'/'business'.
+  category: 'technical' | 'business' | 'general';
   demandLevel: 'very_high' | 'high' | 'medium';
   proficiency: number;
 }
@@ -42,6 +46,28 @@ export interface SkillGap {
   estimatedTimeWeeks: number;
 }
 
+// The occupation/domain-compatibility tier computed by
+// occupationMatchingService.ts's classifyOccupationCompatibility() —
+// 'unrelated' jobs are already filtered out of matchScore's raw-vs-gated
+// gap before a caller ever sees this field, so only the three surviving
+// outcomes (plus 'unknown', when there wasn't enough evidence to classify
+// at all) are representable here. Present only on jobs/paths that went
+// through the occupation-aware scoring path (recommendationService.ts's
+// getCareerRecommendations, matchingService.ts's matchJobsForUser/
+// generateCareerPaths) — absent on mock/mock-derived data that predates
+// that computation or on any consumer that hasn't opted in to reading it.
+export type OccupationCategory = 'same_domain' | 'adjacent' | 'unrelated' | 'unknown';
+
+// Distinguishes what kind of evidence a CareerPath's numbers actually rest
+// on (matchingService.ts's buildJobCareerPath) — 'ready_now' (candidate has
+// every detected requirement), 'skill_enhanced' (a genuine partial overlap,
+// with real remaining gaps), or 'insufficient_data' (the listing had no
+// detectable required skills at all, so 0 skillGaps is NOT evidence of a
+// match — it means there was nothing to compare against). Consumers (e.g.
+// SkillAnalysis.tsx's Timeline row) must check this before treating an
+// empty skillGaps array as "ready now."
+export type CareerPathDataState = 'ready_now' | 'skill_enhanced' | 'insufficient_data';
+
 export interface CareerPath {
   id: string;
   title: string;
@@ -51,6 +77,20 @@ export interface CareerPath {
   opportunities: number;
   skillGaps: SkillGap[];
   recommendedAction: string;
+  // See OccupationCategory above — lets a caller (e.g. aiContextService.ts)
+  // ground an AI explanation in the same compatibility tier the score
+  // itself already reflects, without recomputing anything.
+  occupationCategory?: OccupationCategory;
+  // See CareerPathDataState above. Absent only on a path built before this
+  // field existed (there are none in the current codebase — every
+  // CareerPath is now built by matchingService.ts, which always sets it).
+  dataState?: CareerPathDataState;
+  // True only for the honest "no relevant freelance opportunity" placeholder
+  // (see matchingService.ts's buildFreelanceCareerPath, Step D) — every
+  // other field on this path is a neutral default (0%, no gaps) when this
+  // is true, and SkillAnalysis.tsx renders the honest message instead of a
+  // normal match card.
+  isUnavailable?: boolean;
 }
 
 export interface JobOpportunity {
@@ -68,6 +108,25 @@ export interface JobOpportunity {
   // The source listing's real application/redirect URL (e.g. Adzuna's
   // redirect_url), passed through unmodified. Absent for mock/example jobs.
   applyUrl?: string;
+  // Raw ISO date string exactly as the provider gave it, where it gave
+  // one — never invented. See jobFreshness.ts for parsing/display; always
+  // go through that module rather than trusting this string directly, a
+  // provider's date field is not guaranteed parseable.
+  postedAt?: string;
+  // Which provider this live listing came from (e.g. "adzuna", "remotive")
+  // — for a small, subtle attribution note in the UI. Absent for
+  // mock/example jobs, which have no real provider.
+  source?: string;
+  // Set only for jobs from a live 'remote' search (see
+  // jobAggregatorService.ts's filterByDestination /
+  // providers/geoMatch.ts's classifyRemoteEligibility) — 'confirmed' when
+  // a provider's own structured/free-text signal explicitly names the
+  // destination (or worldwide/a matching region); 'unclear' when the job
+  // was kept despite having no eligibility signal at all. Absent for
+  // local/hybrid and mock/example jobs, where it has no meaning.
+  remoteEligibilityStatus?: 'confirmed' | 'unclear';
+  // See OccupationCategory above.
+  occupationCategory?: OccupationCategory;
 }
 
 export interface FreelanceGig {
@@ -78,6 +137,9 @@ export interface FreelanceGig {
   requiredSkills: Skill[];
   matchPercentage: number;
   platform: string;
+  // See OccupationCategory above — set by matchingService.ts's
+  // matchFreelanceForUser once occupation-aware gating is applied (Step D).
+  occupationCategory?: OccupationCategory;
 }
 
 export interface CourseRecommendation {
@@ -125,8 +187,10 @@ export interface CommunityPost {
 }
 
 // How the user wants to work — collected once per session via the
-// work-model preference step in Career & Income (JobMatcherTab).
-export type WorkModel = 'local' | 'remote' | 'freelance';
+// work-model preference step in Career & Income (JobMatcherTab). 'hybrid'
+// is geographically treated like 'local' (same destination city/region
+// requirement) — see jobAggregatorService.ts's destination filtering.
+export type WorkModel = 'local' | 'hybrid' | 'remote' | 'freelance';
 
 // Same options plus "not sure yet" — used by the dashboard's relocation
 // profile, where the user may not have decided on a work model.
@@ -147,6 +211,11 @@ export interface CareerRecommendation {
   // Same passthrough as JobOpportunity.applyUrl — absent for mock/example
   // recommendations.
   applyUrl?: string;
+  // Same passthrough as JobOpportunity.postedAt/source — see there.
+  postedAt?: string;
+  source?: string;
+  // See OccupationCategory above.
+  occupationCategory?: OccupationCategory;
 }
 
 export interface CopilotMessage {

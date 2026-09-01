@@ -5,9 +5,11 @@ import CareerProfile from './CareerProfile';
 import CareerRecommendations from './CareerRecommendations';
 import SkillAnalysis from './SkillAnalysis';
 import WorkModelSelector from './WorkModelSelector';
-import { resolveDestination, isAdzunaSupportedCountry, type ResolvedLocation } from '../services/locationService';
+import { resolveDestinationFromParts, type ResolvedLocation } from '../services/locationService';
 import { deriveJobQuery } from '../services/jobQueryService';
-import { loadJobOpportunities, errorResult, type JobFetchResult } from '../services/jobService';
+import { errorResult, type JobFetchResult } from '../services/jobService';
+import { searchJobs } from '../services/jobAggregatorService';
+import { addWorkModelIfAbsent } from '../services/workModelSelection';
 
 // Everything Career & Income needs to remember across a visit besides the
 // parsed resume itself (which App.tsx already tracks separately). Lifted to
@@ -20,6 +22,8 @@ export interface CareerSearchState {
   resolvedLocation: ResolvedLocation | null;
   localJobResult: JobFetchResult | null;
   localJobsLoading: boolean;
+  hybridJobResult: JobFetchResult | null;
+  hybridJobsLoading: boolean;
   remoteJobResult: JobFetchResult | null;
   remoteJobsLoading: boolean;
 }
@@ -29,6 +33,8 @@ export const INITIAL_CAREER_SEARCH_STATE: CareerSearchState = {
   resolvedLocation: null,
   localJobResult: null,
   localJobsLoading: false,
+  hybridJobResult: null,
+  hybridJobsLoading: false,
   remoteJobResult: null,
   remoteJobsLoading: false,
 };
@@ -43,7 +49,13 @@ interface JobMatcherTabProps {
   searchState: CareerSearchState;
   onSearchStateChange: (patch: Partial<CareerSearchState>) => void;
   onSendPrompt?: (text: string) => void;
-  destination?: string;
+  // Explicit destination — country is always required (see
+  // locationService.ts's resolveDestinationFromParts); city/region is
+  // free text the user typed, validated/enriched against that country via
+  // Nominatim, never used to guess the country itself.
+  destinationCountryCode?: string;
+  destinationCountryName?: string;
+  destinationCity?: string;
   // Reports the canonical job-fetch result (and the work models it was
   // computed for) up to App.tsx, purely so it can be included in AI
   // context — mirrors the existing onProfileParsed pattern. Does not add
@@ -64,12 +76,22 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
   searchState,
   onSearchStateChange,
   onSendPrompt,
-  destination,
+  destinationCountryCode,
+  destinationCountryName,
+  destinationCity,
   onJobsResolved,
   scrollContainerRef,
 }) => {
-  const { workModels, resolvedLocation, localJobResult, localJobsLoading, remoteJobResult, remoteJobsLoading } =
-    searchState;
+  const {
+    workModels,
+    resolvedLocation,
+    localJobResult,
+    localJobsLoading,
+    hybridJobResult,
+    hybridJobsLoading,
+    remoteJobResult,
+    remoteJobsLoading,
+  } = searchState;
   // Thin wrappers with the same call signature as the useState setters they
   // replace, so every existing call site below (setWorkModels([]),
   // setLocalJobResult(result), etc.) is unchanged — they just now write to
@@ -79,19 +101,23 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
   const setResolvedLocation = (resolvedLocation: ResolvedLocation | null) => onSearchStateChange({ resolvedLocation });
   const setLocalJobResult = (localJobResult: JobFetchResult | null) => onSearchStateChange({ localJobResult });
   const setLocalJobsLoading = (localJobsLoading: boolean) => onSearchStateChange({ localJobsLoading });
+  const setHybridJobResult = (hybridJobResult: JobFetchResult | null) => onSearchStateChange({ hybridJobResult });
+  const setHybridJobsLoading = (hybridJobsLoading: boolean) => onSearchStateChange({ hybridJobsLoading });
   const setRemoteJobResult = (remoteJobResult: JobFetchResult | null) => onSearchStateChange({ remoteJobResult });
   const setRemoteJobsLoading = (remoteJobsLoading: boolean) => onSearchStateChange({ remoteJobsLoading });
 
   // The single "best" result for consumers that only want one overall
   // picture (CareerProfile's hero, SkillAnalysis's scoring, and the
-  // existing onJobsResolved AI-context callback) rather than a Local-vs-
-  // Remote breakdown — prefers live data from either search.
+  // existing onJobsResolved AI-context callback) rather than a per-work-
+  // model breakdown — prefers live data from any search, local first.
   const primaryJobResult: JobFetchResult | null =
     localJobResult?.source === 'live'
       ? localJobResult
-      : remoteJobResult?.source === 'live'
-        ? remoteJobResult
-        : localJobResult ?? remoteJobResult ?? null;
+      : hybridJobResult?.source === 'live'
+        ? hybridJobResult
+        : remoteJobResult?.source === 'live'
+          ? remoteJobResult
+          : localJobResult ?? hybridJobResult ?? remoteJobResult ?? null;
 
   // Lets "Analyze Skill Gap" (in CareerRecommendations) scroll the user down
   // to the existing Tier 3 skill-analysis section below, instead of
@@ -132,130 +158,165 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
     onSearchStateChange(INITIAL_CAREER_SEARCH_STATE);
   };
 
-  // Resolve the destination once, shared by both searches below.
+  // "Explore Remote" (CareerRecommendations.tsx's Local-empty-state
+  // fallback) previously only toggled that component's own local display
+  // state, never actually adding 'remote' to workModels — so the real
+  // Remote search effect below never ran and the fallback could never show
+  // genuine live results. This adds 'remote' to the SAME workModels state
+  // every other search already keys off of, so the existing Remote effect
+  // becomes the one and only thing that performs the search — no second
+  // fetch implementation. addWorkModelIfAbsent is dedup-safe: a repeated
+  // click (or a click when 'remote' is already selected) returns the exact
+  // same array reference, so it's a no-op that can never re-trigger the
+  // Remote effect or create a duplicate entry.
+  const handleExploreRemote = () => {
+    setWorkModels(addWorkModelIfAbsent(workModels, 'remote'));
+  };
+
+  // Resolve the destination once, shared by all three searches below.
+  // Country is explicit (never guessed from free text); Nominatim only
+  // validates/enriches the typed city against that country — see
+  // locationService.ts's resolveDestinationFromParts.
   useEffect(() => {
-    if (!parsedProfile || workModels.length === 0) {
+    if (!parsedProfile || workModels.length === 0 || !destinationCountryCode) {
       setResolvedLocation(null);
       return;
     }
 
     let cancelled = false;
 
-    resolveDestination(destination ?? '').then((location) => {
+    resolveDestinationFromParts({
+      countryCode: destinationCountryCode,
+      countryName: destinationCountryName ?? '',
+      cityOrRegion: destinationCity ?? '',
+    }).then((location) => {
       if (!cancelled) setResolvedLocation(location);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [parsedProfile, workModels, destination]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsedProfile, workModels, destinationCountryCode, destinationCountryName, destinationCity]);
 
-  // LOCAL search — independent of Remote. Only attempted while 'local' is
-  // selected. Scoped to the resolved destination city/region + country, so
-  // results genuinely match where the user is relocating to (unchanged
-  // query shape from before this fix).
+  // Shared by all three work-model searches below — resolves via the
+  // multi-provider aggregator when a real destination country is
+  // available, or the existing "no destination" error otherwise. Each
+  // provider's own supports() (adzunaProvider.ts, etc.) decides whether it
+  // can help with this specific destination, so a country Adzuna doesn't
+  // cover can still return results from Arbeitnow/Remotive/JSearch.
+  const runAggregatedSearch = async (
+    workModel: 'local' | 'hybrid' | 'remote',
+    signal: AbortSignal
+  ): Promise<JobFetchResult> => {
+    if (!resolvedLocation || !resolvedLocation.countryCode || resolvedLocation.isRemote) {
+      return errorResult('No resolved destination country was provided for the search.');
+    }
+    if (!parsedProfile) {
+      return errorResult('No resolved destination country was provided for the search.');
+    }
+
+    const query = deriveJobQuery(parsedProfile);
+    const aggregated = await searchJobs({
+      what: query.primaryQuery,
+      // Falls back to the resolved region (e.g. "New Jersey") when no city
+      // is available — a state/region-level destination has no
+      // city/town/village/county in its resolved address, so `city` alone
+      // left local/hybrid searches unfiltered by location entirely.
+      destinationCity: resolvedLocation.city,
+      destinationRegion: resolvedLocation.region,
+      destinationCountry: resolvedLocation.countryCode,
+      destinationCountryName: resolvedLocation.countryName,
+      workModel,
+      signal,
+    });
+
+    return { jobs: aggregated.jobs, source: aggregated.source, reason: aggregated.reason };
+  };
+
+  // LOCAL search — independent of Hybrid/Remote. Only attempted while
+  // 'local' is selected.
   useEffect(() => {
     if (!parsedProfile || !workModels.includes('local') || !resolvedLocation) {
       setLocalJobResult(null);
+      setLocalJobsLoading(false);
       return;
     }
 
     let cancelled = false;
-
-    const run = async () => {
-      setLocalJobsLoading(true);
-
-      const query = deriveJobQuery(parsedProfile);
-      let result: JobFetchResult;
-
-      if (
-        resolvedLocation.countryCode &&
-        !resolvedLocation.isRemote &&
-        isAdzunaSupportedCountry(resolvedLocation.countryCode)
-      ) {
-        result = await loadJobOpportunities({
-          what: query.primaryQuery,
-          // Falls back to the resolved region (e.g. "New Jersey") when no
-          // city is available — a state/region-level destination has no
-          // city/town/village/county in its resolved address, so `city`
-          // alone left the search unfiltered by location entirely.
-          where: resolvedLocation.city || resolvedLocation.region,
-          country: resolvedLocation.countryCode,
-        });
-      } else if (resolvedLocation.countryCode && !resolvedLocation.isRemote && resolvedLocation.countryName) {
-        // Country resolved, but it isn't one of the job-search provider's
-        // supported boards — skip the live call (already known to be
-        // rejected) and say so specifically.
-        result = errorResult(
-          `Live job listings for ${resolvedLocation.countryName} aren't currently supported by our job-search provider.`
-        );
-      } else {
-        // Truly unresolved/ambiguous, or remote — no country to search a
-        // local market in at all.
-        result = errorResult('No resolved destination country was provided for the search.');
-      }
-
+    const controller = new AbortController();
+    setLocalJobsLoading(true);
+    runAggregatedSearch('local', controller.signal).then((result) => {
       if (!cancelled) {
         setLocalJobResult(result);
         setLocalJobsLoading(false);
       }
-    };
-
-    run();
+    });
 
     return () => {
       cancelled = true;
+      // Real network cancellation, not just a state-update guard — a
+      // stale/superseded search's underlying provider requests are
+      // actually aborted, not left to finish in the background. Scoped to
+      // this effect's own controller, so Hybrid/Remote changing never
+      // aborts Local's in-flight requests.
+      controller.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedProfile, workModels, resolvedLocation]);
 
-  // REMOTE search — independent of Local. Uses the same resolved country
-  // (Adzuna's API is inherently country-scoped — there is no borderless
-  // "remote" endpoint) but deliberately WITHOUT the city/region `where`
-  // constraint, so it's a genuinely broader, separate query rather than a
-  // relabeled copy of Local's narrower result — a Local-specific empty
-  // result or failure can never affect this one.
+  // HYBRID search — independent of Local/Remote. Geographic matching is
+  // identical to Local (see jobAggregatorService.ts's filterByDestination):
+  // destination city/region required, a distant city never qualifies.
   useEffect(() => {
-    if (!parsedProfile || !workModels.includes('remote') || !resolvedLocation) {
-      setRemoteJobResult(null);
+    if (!parsedProfile || !workModels.includes('hybrid') || !resolvedLocation) {
+      setHybridJobResult(null);
+      setHybridJobsLoading(false);
       return;
     }
 
     let cancelled = false;
-
-    const run = async () => {
-      setRemoteJobsLoading(true);
-
-      const query = deriveJobQuery(parsedProfile);
-      let result: JobFetchResult;
-
-      if (
-        resolvedLocation.countryCode &&
-        !resolvedLocation.isRemote &&
-        isAdzunaSupportedCountry(resolvedLocation.countryCode)
-      ) {
-        result = await loadJobOpportunities({
-          what: query.primaryQuery,
-          country: resolvedLocation.countryCode,
-        });
-      } else if (resolvedLocation.countryCode && !resolvedLocation.isRemote && resolvedLocation.countryName) {
-        result = errorResult(
-          `Live job listings for ${resolvedLocation.countryName} aren't currently supported by our job-search provider.`
-        );
-      } else {
-        result = errorResult('No resolved destination country was provided for the search.');
+    const controller = new AbortController();
+    setHybridJobsLoading(true);
+    runAggregatedSearch('hybrid', controller.signal).then((result) => {
+      if (!cancelled) {
+        setHybridJobResult(result);
+        setHybridJobsLoading(false);
       }
+    });
 
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsedProfile, workModels, resolvedLocation]);
+
+  // REMOTE search — independent of Local/Hybrid. Destination country is
+  // the constraint; city/region is not (see filterByDestination) — a
+  // Local-specific empty result or failure can never affect this one.
+  useEffect(() => {
+    if (!parsedProfile || !workModels.includes('remote') || !resolvedLocation) {
+      setRemoteJobResult(null);
+      setRemoteJobsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setRemoteJobsLoading(true);
+    runAggregatedSearch('remote', controller.signal).then((result) => {
       if (!cancelled) {
         setRemoteJobResult(result);
         setRemoteJobsLoading(false);
       }
-    };
-
-    run();
+    });
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedProfile, workModels, resolvedLocation]);
 
   // Reports the single "best" result up to App.tsx for AI context — same
@@ -280,6 +341,17 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
       );
     }
   }, [localJobResult, localJobsLoading]);
+
+  useEffect(() => {
+    if (hybridJobsLoading) {
+      console.debug('[JobMatcherTab] loading Hybrid opportunities…');
+    } else if (hybridJobResult) {
+      console.debug(
+        `[JobMatcherTab] Hybrid fetch complete — source: ${hybridJobResult.source}, jobs: ${hybridJobResult.jobs.length}` +
+          (hybridJobResult.reason ? `, reason: ${hybridJobResult.reason}` : '')
+      );
+    }
+  }, [hybridJobResult, hybridJobsLoading]);
 
   useEffect(() => {
     if (remoteJobsLoading) {
@@ -350,11 +422,16 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
               localJobSource={localJobResult?.source}
               localJobReason={localJobResult?.reason}
               localJobsLoading={localJobsLoading}
+              hybridJobs={hybridJobResult?.jobs}
+              hybridJobSource={hybridJobResult?.source}
+              hybridJobReason={hybridJobResult?.reason}
+              hybridJobsLoading={hybridJobsLoading}
               remoteJobs={remoteJobResult?.jobs}
               remoteJobSource={remoteJobResult?.source}
               remoteJobReason={remoteJobResult?.reason}
               remoteJobsLoading={remoteJobsLoading}
               onAnalyzeSkillGaps={scrollToSkillAnalysis}
+              onExploreRemote={handleExploreRemote}
               destinationCountryName={resolvedLocation?.countryName}
             />
           </section>

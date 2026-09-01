@@ -4,7 +4,21 @@ import { getCareerRecommendations } from '../services/recommendationService';
 import { calculateSkillGaps } from '../services/skillAnalysisService';
 import { assessRemoteEligibility } from '../services/remoteEligibilityService';
 import { jobsForCareerGuidance, type JobFetchSource } from '../services/jobService';
+import { isSafeExternalUrl } from '../utils/urlSafety';
+import { formatRelativePostedAt } from '../services/jobFreshness';
 import { TrendingUp, Zap, Globe, Award, Sparkles } from 'lucide-react';
+
+// Display names for NormalizedJob.source (providers/types.ts's JobSource) —
+// duplicated here as a tiny display-only map rather than importing the
+// provider-internal type, since this component only needs presentable
+// text, not the type itself.
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  adzuna: 'Adzuna',
+  arbeitnow: 'Arbeitnow',
+  remotive: 'Remotive',
+  jsearch: 'JSearch',
+  himalayas: 'Himalayas',
+};
 
 interface CareerRecommendationsProps {
   profile: ResumeProfile;
@@ -18,6 +32,14 @@ interface CareerRecommendationsProps {
   localJobSource?: JobFetchSource;
   localJobReason?: string;
   localJobsLoading?: boolean;
+  // Hybrid is geographically identical to Local (same destination
+  // city/region requirement — see jobAggregatorService.ts), given its own
+  // independent search/section for the same reason Local and Remote are
+  // independent of each other.
+  hybridJobs?: JobOpportunity[];
+  hybridJobSource?: JobFetchSource;
+  hybridJobReason?: string;
+  hybridJobsLoading?: boolean;
   remoteJobs?: JobOpportunity[];
   remoteJobSource?: JobFetchSource;
   remoteJobReason?: string;
@@ -25,6 +47,13 @@ interface CareerRecommendationsProps {
   // Scrolls to the existing Tier 3 skill-analysis section (owned by
   // JobMatcherTab) — no new analysis or AI request, just navigation.
   onAnalyzeSkillGaps?: () => void;
+  // Called when the user clicks "Explore Remote" from Local's empty-state
+  // fallback below — adds 'remote' to JobMatcherTab's real workModels
+  // state (the single source of truth every search effect keys off of),
+  // so the existing Remote useEffect there actually runs and this
+  // fallback can show genuine live results instead of relying on a Remote
+  // search that was never triggered.
+  onExploreRemote?: () => void;
   // The user's resolved relocation destination country name, used only to
   // compare a live Remote listing's own text against it for the
   // EOR/eligibility note below. Never used for scoring/matching.
@@ -45,11 +74,16 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   localJobSource,
   localJobReason,
   localJobsLoading,
+  hybridJobs,
+  hybridJobSource,
+  hybridJobReason,
+  hybridJobsLoading,
   remoteJobs,
   remoteJobSource,
   remoteJobReason,
   remoteJobsLoading,
   onAnalyzeSkillGaps,
+  onExploreRemote,
   destinationCountryName,
 }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -62,7 +96,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   // drops the original description/timezone text) — needed only to look up
   // the listing's own eligibility-relevant text below, not for scoring.
   const jobById = new Map(
-    [...(localJobs ?? []), ...(remoteJobs ?? [])].map((job) => [`rec_${job.id}`, job])
+    [...(localJobs ?? []), ...(hybridJobs ?? []), ...(remoteJobs ?? [])].map((job) => [`rec_${job.id}`, job])
   );
 
   // Career guidance (the Remote section's cards) must keep working even
@@ -89,6 +123,18 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
         }))
       : [];
 
+  // Hybrid mirrors Local exactly — same destination-scoped, live-only
+  // gating, same title-prefix strip — it's an independent search with
+  // identical geographic requirements (see jobAggregatorService.ts).
+  const hybridRecs: CareerRecommendation[] =
+    workModels.includes('hybrid') && hybridJobSource === 'live' && hybridJobs && hybridJobs.length > 0
+      ? getCareerRecommendations(profile, { jobs: hybridJobs, limit: 5 }).map((rec) => ({
+          ...rec,
+          workModel: 'hybrid' as WorkModel,
+          title: rec.title.replace(/^Remote\s+/i, ''),
+        }))
+      : [];
+
   // Local → Remote fallback: when Local has nothing suitable, offer the
   // independent Remote search's own live results as an alternative instead
   // of a dead end — never mock/fallback jobs relabeled as a "live" remote
@@ -103,7 +149,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   // see Step 6 diagnosis), and mock freelance data must not be presented as
   // real. Honest MVP state: always unavailable, never mock, never relabeled
   // remote/local jobs.
-  const allRecs = [...remoteRecs, ...localRecs];
+  const allRecs = [...remoteRecs, ...localRecs, ...hybridRecs];
 
   const handleAskAi = (rec: CareerRecommendation, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -116,7 +162,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
     // the clause entirely rather than inventing or placeholder-labeling it.
     const salaryClause = rec.salaryRange ? ` (${rec.salaryRange})` : '';
 
-    const prompt = `I'm considering this ${rec.workModel} opportunity: "${rec.title}" at ${rec.company}${salaryClause}, a ${rec.matchScore}% match for my profile. I already have: ${matched}. I'm missing: ${missing}. Based on my ${profile.yearsExperience} years of experience${experienceClause}, can you explain: why this opportunity may fit my background, my strongest matching skills for it, any important gaps or concerns, and what I should consider before applying?`;
+    const prompt = `I'm considering this ${rec.workModel} opportunity: "${rec.title}" at ${rec.company}${salaryClause}, a ${rec.matchScore}% match for my profile. I already have: ${matched}. I'm missing: ${missing}. Based on my ${profile.yearsExperience} years of experience${experienceClause}, can you explain: why this opportunity may fit my background, my strongest matching skills for it, any important gaps or concerns, and what I should consider before applying? Base your answer only on the facts I've given above — the match percentage and skill lists are already computed, so use them as-is rather than estimating your own, and don't invent skills, requirements, or other details I haven't mentioned.`;
 
     onSendPrompt(prompt);
   };
@@ -132,35 +178,66 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
     setExpandedId(rec.id);
   };
 
-  // isVerifiedLocal: true only for cards from localRecs — those come from a
-  // destination-scoped Adzuna query (where=city or region; see
-  // JobMatcherTab.tsx), so their location genuinely matches the user's
-  // resolved destination. remoteRecs/remoteFallbackRecs reuse that same
+  // kind: which independently-searched section this card came from.
+  // 'local'/'hybrid' cards come from a destination-scoped query (where=city
+  // or region; see JobMatcherTab.tsx/jobAggregatorService.ts), so their
+  // location genuinely matches the user's resolved destination. 'remote'
+  // cards (including Local's "explore remote instead" fallback) reuse that
   // canonical job list without any further location verification, so their
   // actual geographic eligibility for this user is not confirmed by our
-  // data — Adzuna's schema has no eligibility/remote-region field to check.
-  const renderCard = (rec: CareerRecommendation, index: number, isVerifiedLocal: boolean) => {
+  // data — hence the remote-eligibility note below only applies to them.
+  const renderCard = (rec: CareerRecommendation, index: number, kind: 'local' | 'hybrid' | 'remote') => {
     const colors = getMatchColor(rec.matchScore);
     const isExpanded = expandedId === rec.id;
-    // Which independent search this specific card came from — Local cards
-    // always reflect the Local search's own source; Remote (and Local's
-    // "explore remote instead" fallback) cards reflect the Remote search's.
-    const cardJobSource = isVerifiedLocal ? localJobSource : remoteJobSource;
+    const isVerifiedLocation = kind === 'local' || kind === 'hybrid';
+    // Which independent search this specific card came from.
+    const cardJobSource = kind === 'local' ? localJobSource : kind === 'hybrid' ? hybridJobSource : remoteJobSource;
     // Reuses the existing skillAnalysisService function directly — matchedSkills
     // + missingSkills together are exactly this opportunity's requiredSkills,
     // since recommendationService partitions them from the same source list.
     const skillGaps = calculateSkillGaps(profile.skills, [...rec.matchedSkills, ...rec.missingSkills]);
 
     // Remote eligibility/EOR note — only for genuinely live Remote listings
-    // (never Local, which is already destination-verified via its scoped
-    // Adzuna query; never mock/example data). Looked up from the raw
-    // JobOpportunity this recommendation was built from, purely to read its
-    // own title/description/location text — no scoring involved.
-    const sourceJob = !isVerifiedLocal ? jobById.get(rec.id) : undefined;
+    // (never Local/Hybrid, which are already destination-verified via
+    // their scoped queries; never mock/example data). Looked up from the
+    // raw JobOpportunity this recommendation was built from, purely to
+    // read its own title/description/location text — no scoring involved.
+    const sourceJob = !isVerifiedLocation ? jobById.get(rec.id) : undefined;
     const eligibility =
-      !isVerifiedLocal && cardJobSource === 'live' && sourceJob
+      !isVerifiedLocation && cardJobSource === 'live' && sourceJob
         ? assessRemoteEligibility(sourceJob, destinationCountryName)
         : null;
+
+    // Structured-signal counterpart to `eligibility` above — derived by
+    // jobAggregatorService.ts from a provider's own country/eligibility
+    // fields (see geoMatch.ts's classifyRemoteEligibility), not from
+    // scanning this listing's own text. Shown only when the text-based
+    // `eligibility` check above has nothing more specific to say
+    // (null, or 'supported' — which renders no note at all today), so a
+    // job with genuinely no eligibility signal from either source always
+    // gets at least one honest, concise note rather than two overlapping
+    // ones.
+    const showUnclearEligibilityNote =
+      !isVerifiedLocation &&
+      cardJobSource === 'live' &&
+      sourceJob?.remoteEligibilityStatus === 'unclear' &&
+      (!eligibility || eligibility.status === 'supported');
+
+    // Only ever render a real, absolute http(s) link — never trust
+    // rec.applyUrl blindly as an href. See utils/urlSafety.ts.
+    const safeApplyUrl = isSafeExternalUrl(rec.applyUrl) ? rec.applyUrl : undefined;
+
+    // Subtle provider attribution + freshness — live jobs only (mock/
+    // example recommendations have no real rec.source). A missing/
+    // unparseable postedAt simply omits the freshness half rather than
+    // claiming one — see jobFreshness.ts.
+    const providerName = cardJobSource === 'live' && rec.source ? PROVIDER_DISPLAY_NAMES[rec.source] ?? rec.source : undefined;
+    const postedLabel = cardJobSource === 'live' ? formatRelativePostedAt(rec.postedAt) : null;
+    const attributionText = providerName
+      ? postedLabel
+        ? `Via ${providerName} · ${postedLabel}`
+        : `Via ${providerName}`
+      : null;
 
     return (
       <div
@@ -176,6 +253,11 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
                 {rec.company}
               </p>
+              {attributionText && (
+                <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {attributionText}
+                </p>
+              )}
             </div>
             <div className={`px-3 py-1.5 rounded-full text-sm font-bold ${colors.badge} whitespace-nowrap ml-3`}>
               {rec.matchScore}%
@@ -236,16 +318,16 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               <p className="text-xs font-semibold text-[var(--primary-dark)] uppercase tracking-wider mb-1">Next Step</p>
               {cardJobSource !== 'live' ? (
                 <p className="text-sm font-medium text-[var(--text-dark)]">Example opportunity — not a real listing.</p>
-              ) : rec.applyUrl ? (
+              ) : safeApplyUrl ? (
                 <>
                   <a
-                    href={rec.applyUrl}
+                    href={safeApplyUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(event) => event.stopPropagation()}
                     className="text-sm font-medium underline text-[var(--primary-dark)] hover:opacity-80"
                   >
-                    {isVerifiedLocal ? 'View & Apply' : 'Check eligibility'}
+                    {isVerifiedLocation ? 'View & Apply' : 'Check eligibility'}
                   </a>
                   <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                     You may be applying before relocating — the employer or job source may apply its own location,
@@ -263,6 +345,18 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
                   Remote Eligibility
                 </p>
                 <p className="text-sm text-[var(--text-dark)]">{eligibility.message}</p>
+              </div>
+            )}
+
+            {showUnclearEligibilityNote && (
+              <div className="p-3 bg-[var(--surface)] border border-[var(--border-warm)] rounded-lg">
+                <p className="text-xs font-semibold text-[var(--text-light)] uppercase tracking-wider mb-1">
+                  Remote Eligibility
+                </p>
+                <p className="text-sm text-[var(--text-dark)]">
+                  Remote eligibility not specified — the listing doesn&rsquo;t say which countries it&rsquo;s open to.
+                  Verify directly with the employer before applying.
+                </p>
               </div>
             )}
 
@@ -376,7 +470,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               )
             )}
           </div>
-          <div className="space-y-3">{remoteRecs.map((rec, index) => renderCard(rec, index, false))}</div>
+          <div className="space-y-3">{remoteRecs.map((rec, index) => renderCard(rec, index, 'remote'))}</div>
         </section>
       )}
 
@@ -408,7 +502,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               </p>
             </div>
           ) : localRecs.length > 0 ? (
-            <div className="space-y-3">{localRecs.map((rec, index) => renderCard(rec, index, true))}</div>
+            <div className="space-y-3">{localRecs.map((rec, index) => renderCard(rec, index, 'local'))}</div>
           ) : (
             <div className="space-y-3">
               <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
@@ -425,7 +519,13 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setLocalFallbackChoice('remote')}
+                    onClick={() => {
+                      setLocalFallbackChoice('remote');
+                      // The display toggle above is not enough on its own
+                      // (see onExploreRemote's own comment) — this is what
+                      // actually makes the Remote search run.
+                      onExploreRemote?.();
+                    }}
                     aria-pressed={localFallbackChoice === 'remote'}
                     className="rounded-md border px-3 py-1.5 text-xs font-medium transition-colors"
                     style={
@@ -461,7 +561,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
                     >
                       Live opportunities
                     </span>
-                    <div className="space-y-3">{remoteFallbackRecs.map((rec, index) => renderCard(rec, index, false))}</div>
+                    <div className="space-y-3">{remoteFallbackRecs.map((rec, index) => renderCard(rec, index, 'remote'))}</div>
                   </>
                 ) : (
                   <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
@@ -482,6 +582,39 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
                   </p>
                 </div>
               )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {workModels.includes('hybrid') && (
+        <section>
+          <h3 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+            Hybrid
+          </h3>
+          {hybridJobsLoading ? (
+            <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+              <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                Finding live opportunities…
+              </p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                Checking current listings based on your profile, location, and work preferences.
+              </p>
+            </div>
+          ) : hybridRecs.length > 0 ? (
+            <div className="space-y-3">{hybridRecs.map((rec, index) => renderCard(rec, index, 'hybrid'))}</div>
+          ) : (
+            <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+              <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                {hybridJobSource === 'error'
+                  ? 'Live hybrid search is temporarily unavailable.'
+                  : 'No live opportunities found right now.'}
+              </p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                {hybridJobSource === 'error'
+                  ? hybridJobReason || 'The live job search could not be completed.'
+                  : 'Try Local or Remote to see other opportunities.'}
+              </p>
             </div>
           )}
         </section>

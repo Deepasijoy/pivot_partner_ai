@@ -16,6 +16,7 @@ import { jobsForCareerGuidance } from './services/jobService'
 import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
 import { buildAiContext } from './services/aiContextService'
 import { INITIAL_CAREER_SEARCH_STATE, type CareerSearchState } from './components/JobMatcherTab'
+import { COUNTRIES } from './data/countries'
 import { useAuth } from './contexts/AuthContext'
 import { Stethoscope, Landmark, GraduationCap, LogOut, MessageCircle, X } from 'lucide-react'
 import './styles/theme.css'
@@ -30,7 +31,17 @@ function App() {
   const [parsedProfile, setParsedProfile] =
     useState<ResumeProfile | null>(null)
   const [origin, setOrigin] = useState('')
-  const [destination, setDestination] = useState('')
+  // Destination is explicit: a country the user selects (never guessed
+  // from free text) plus a free-text city/region within it — see
+  // locationService.ts's resolveDestinationFromParts. `destination` below
+  // is a derived display string, kept for every existing consumer that
+  // only ever needed a plain string (RelocationReadiness, HousingResources,
+  // CommunityResources, aiContextService, the journey-status text) — none
+  // of them need to change.
+  const [destinationCountryCode, setDestinationCountryCode] = useState('')
+  const [destinationCountryName, setDestinationCountryName] = useState('')
+  const [destinationCity, setDestinationCity] = useState('')
+  const destination = [destinationCity.trim(), destinationCountryName.trim()].filter(Boolean).join(', ')
   const [relocationDate, setRelocationDate] = useState('')
   // Relocation-profile fields restored to the dashboard (previously only
   // origin/destination/relocationDate existed, on the Relocation tab).
@@ -113,9 +124,14 @@ function App() {
 
     if (!parsedProfile || careerAnalysisSent.current) return
 
-    const matchedJobs = matchJobsForUser(parsedProfile.skills, jobsForCareerGuidance(result.jobs))
-    const paths = generateCareerPaths(parsedProfile.skills, matchedJobs)
-    const topPath = paths[0]
+    const matchedJobs = matchJobsForUser(parsedProfile, jobsForCareerGuidance(result.jobs))
+    const paths = generateCareerPaths(parsedProfile.skills, matchedJobs, parsedProfile.likelyRole, parsedProfile.industries)
+    // Skips the honest "no relevant freelance opportunity" placeholder
+    // (Step D) — announcing it as "Top match: Freelance & Consulting — 0%
+    // fit" would be exactly the kind of fabricated-confidence message this
+    // pass is fixing elsewhere. If every generated path is unavailable,
+    // there's nothing genuine to announce, so the summary is skipped.
+    const topPath = paths.find((path) => !path.isUnavailable)
     if (!topPath) return
 
     careerAnalysisSent.current = true
@@ -487,12 +503,18 @@ Your career can travel with you.`,
             {activeTab === 'dashboard' && (
               <DashboardHome
                 origin={origin}
-                destination={destination}
+                destinationCountryCode={destinationCountryCode}
+                destinationCountryName={destinationCountryName}
+                destinationCity={destinationCity}
                 relocationDate={relocationDate}
                 workSituation={workSituation}
                 preferredWorkModel={preferredWorkModel}
                 onOriginChange={setOrigin}
-                onDestinationChange={setDestination}
+                onDestinationCountryChange={(code, name) => {
+                  setDestinationCountryCode(code)
+                  setDestinationCountryName(name)
+                }}
+                onDestinationCityChange={setDestinationCity}
                 onRelocationDateChange={setRelocationDate}
                 onWorkSituationChange={setWorkSituation}
                 onPreferredWorkModelChange={setPreferredWorkModel}
@@ -540,12 +562,29 @@ Your career can travel with you.`,
                       <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
                         Moving To
                       </label>
+                      <select
+                        value={destinationCountryCode}
+                        onChange={(e) => {
+                          const code = e.target.value
+                          const country = COUNTRIES.find((c) => c.code === code)
+                          setDestinationCountryCode(code)
+                          setDestinationCountryName(country?.name ?? '')
+                        }}
+                        className="w-full text-sm"
+                      >
+                        <option value="">Select a country…</option>
+                        {COUNTRIES.map((country) => (
+                          <option key={country.code} value={country.code}>
+                            {country.name}
+                          </option>
+                        ))}
+                      </select>
                       <input
                         type="text"
-                        value={destination}
-                        onChange={(e) => setDestination(e.target.value)}
-                        placeholder="e.g. Dubai"
-                        className="w-full text-sm"
+                        value={destinationCity}
+                        onChange={(e) => setDestinationCity(e.target.value)}
+                        placeholder="City or region, e.g. Dubai"
+                        className="w-full text-sm mt-1.5"
                       />
                     </div>
 
@@ -629,8 +668,20 @@ Your career can travel with you.`,
                 onResetProfile={handleResetProfile}
                 searchState={careerSearchState}
                 onSearchStateChange={updateCareerSearchState}
-                onSendPrompt={sendPrompt}
-                destination={destination}
+                // Was previously wired bare (no context), unlike every
+                // other entry point into the chat (handleUserPrompt below
+                // always attaches buildContext()) — meaning the "Ask AI"
+                // button's per-job prompt reached Groq without the
+                // structured PROFILE/JOB DATA grounding context the rest
+                // of the app already relies on. The prompt text itself
+                // still carries real computed facts (see
+                // CareerRecommendations.tsx's handleAskAi), but the model
+                // now also gets the same evidence-grounding instructions
+                // and profile/job context every other chat turn does.
+                onSendPrompt={(text) => sendPrompt(text, buildContext())}
+                destinationCountryCode={destinationCountryCode}
+                destinationCountryName={destinationCountryName}
+                destinationCity={destinationCity}
                 onJobsResolved={handleJobsResolved}
                 scrollContainerRef={careerScrollContainerRef}
               />

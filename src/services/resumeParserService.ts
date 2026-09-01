@@ -1,5 +1,6 @@
 import type { ResumeProfile, Skill } from '../types';
-import { mockSkillTaxonomy } from './mockData';
+import { detectSkills } from './skillExtractionService';
+import { detectIndustries } from './industryDetectionService';
 // Vite resolves this to the built worker file's URL at build time — no
 // vite.config.ts change needed, `?url` asset imports work out of the box.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -11,20 +12,6 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 const ACCEPTED_EXTENSIONS = ['.pdf'];
 const PARSE_DELAY_MS = 1200;
 
-const INDUSTRY_KEYWORDS: Record<string, string> = {
-  fintech: 'Fintech',
-  finance: 'Finance',
-  healthcare: 'Healthcare',
-  'e-commerce': 'E-commerce',
-  ecommerce: 'E-commerce',
-  education: 'Education',
-  retail: 'Retail',
-  saas: 'SaaS',
-  marketing: 'Marketing',
-  logistics: 'Logistics',
-  consulting: 'Consulting',
-};
-
 export async function parseResume(file: File): Promise<ResumeProfile> {
   const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
   if (!ACCEPTED_EXTENSIONS.includes(extension)) {
@@ -32,12 +19,12 @@ export async function parseResume(file: File): Promise<ResumeProfile> {
   }
 
   const [text] = await Promise.all([extractPdfText(file), delay(PARSE_DELAY_MS)]);
-  const lowerText = text.toLowerCase();
 
-  const skills = detectSkills(lowerText);
+  const skills = detectSkills(text);
   const yearsExperience = detectYearsExperience(text);
-  const industries = detectIndustries(lowerText);
+  const industries = detectIndustries(text);
   const seniority = detectSeniority(yearsExperience);
+  const likelyRole = detectLikelyRole(text);
 
   return {
     skills,
@@ -45,6 +32,7 @@ export async function parseResume(file: File): Promise<ResumeProfile> {
     yearsExperience,
     industries,
     seniority,
+    likelyRole,
   };
 }
 
@@ -143,206 +131,61 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Free-text phrasing that commonly shows up in resumes but doesn't literally
-// match a taxonomy skill name. Every value here must be an exact taxonomy
-// skill name — this only maps wording onto existing skills, it never invents
-// new ones. Adapted from server/utils/skillNormalization.ts's ALIAS_MAP.
-const SKILL_ALIASES: Record<string, string> = {
-  'financial reporting': 'Financial Analysis',
-  'data reporting': 'Data Analysis',
-  'stakeholder coordination': 'Stakeholder Management',
-  spreadsheets: 'Excel',
-  spreadsheet: 'Excel',
-  'ms excel': 'Excel',
-  'microsoft excel': 'Excel',
-  js: 'JavaScript',
-  'javascript programming': 'JavaScript',
-  'react.js': 'React',
-  reactjs: 'React',
-  node: 'Node.js',
-  nodejs: 'Node.js',
-  ml: 'Machine Learning',
-  'artificial intelligence': 'Machine Learning',
-  'aws cloud': 'AWS',
-  'amazon web services': 'AWS',
-  'cloud computing': 'Cloud Architecture',
-  'agile methodology': 'Agile/Scrum',
-  scrum: 'Agile/Scrum',
-  'project coordination': 'Project Management',
-  'project scoping': 'Project Management',
-  'project delivery': 'Project Management',
-  'search engine optimization': 'SEO',
-  'client relationship management': 'Customer Success',
-  'crm software': 'CRM (Salesforce/HubSpot)',
-  salesforce: 'CRM (Salesforce/HubSpot)',
-  hubspot: 'CRM (Salesforce/HubSpot)',
-  'people management': 'HR Management',
-  'talent acquisition': 'Recruitment',
-  hiring: 'Recruitment',
-  'budget planning': 'Budgeting',
-  'financial forecasting': 'Forecasting',
-  presenting: 'Public Speaking',
-  'sql database': 'SQL',
-  'sql server': 'SQL',
-  databases: 'SQL',
-  'power bi dashboards': 'Power BI',
-  powerbi: 'Power BI',
-  'power-bi': 'Power BI',
-  'ms power bi': 'Power BI',
-  'data visualization': 'Tableau',
-  'data analytics': 'Data Analysis',
-  'business analytics': 'Data Analysis',
-  'data analyst': 'Data Analysis',
-  'python programming': 'Python',
-  'python scripting': 'Python',
-  'advanced excel': 'Excel',
-  'excel modeling': 'Excel',
-  'process improvement': 'Process Optimization',
-  'customer relationship management': 'CRM (Salesforce/HubSpot)',
-  'customer service': 'Customer Success',
-  'sales management': 'Sales Strategy',
-  'digital marketing': 'Marketing Strategy',
-  'credit analysis': 'Financial Analysis',
-  'risk analysis': 'Financial Analysis',
-  underwriting: 'Financial Analysis',
-};
-
-// Whole-word/whole-phrase substring check: the match must not be immediately
-// preceded or followed by another letter/digit, so canonical names like
-// "Excel" don't fire on "excellent" or "SQL" on "MySQL".
-function containsTerm(lowerText: string, term: string): boolean {
-  const lowerTerm = term.toLowerCase();
-  if (!lowerTerm) return false;
-
-  const isWordChar = (ch: string) => /[a-z0-9]/i.test(ch);
-  let fromIndex = 0;
-  while (true) {
-    const idx = lowerText.indexOf(lowerTerm, fromIndex);
-    if (idx === -1) return false;
-
-    const before = idx === 0 ? '' : lowerText[idx - 1];
-    const after = idx + lowerTerm.length >= lowerText.length ? '' : lowerText[idx + lowerTerm.length];
-    if (!isWordChar(before) && !isWordChar(after)) {
-      return true;
-    }
-    fromIndex = idx + 1;
-  }
-}
-
-// Common short connector words that don't carry skill-identifying meaning on
-// their own — excluded from the token/fuzzy pass below so e.g. "of" or "and"
-// never has to appear near another token to count as a match, and never
-// counts as a token in its own right.
-const FUZZY_STOPWORDS = new Set(['and', 'of', 'the', 'for', 'to', 'in', 'on', 'with', 'a', 'an']);
-
-function significantTokens(name: string): string[] {
-  return name
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((token) => token.length > 2 && !FUZZY_STOPWORDS.has(token));
-}
-
-// Whole-word occurrence indices of `term` within `lowerText` — same
-// word-boundary rule as containsTerm(), but returns positions instead of a
-// boolean so proximity between two different terms can be checked.
-function wholeWordIndices(lowerText: string, term: string): number[] {
-  const indices: number[] = [];
-  if (!term) return indices;
-
-  const isWordChar = (ch: string) => /[a-z0-9]/i.test(ch);
-  let fromIndex = 0;
-  while (true) {
-    const idx = lowerText.indexOf(term, fromIndex);
-    if (idx === -1) return indices;
-
-    const before = idx === 0 ? '' : lowerText[idx - 1];
-    const after = idx + term.length >= lowerText.length ? '' : lowerText[idx + term.length];
-    if (!isWordChar(before) && !isWordChar(after)) {
-      indices.push(idx);
-    }
-    fromIndex = idx + 1;
-  }
-}
-
-// General token/fuzzy fallback for multi-word skill names: rather than
-// requiring the exact phrase verbatim (containsTerm above), this only
-// requires every significant word of the skill's name to appear, as whole
-// words, within a bounded window of each other somewhere in the text — e.g.
-// "Data Analysis" still matches text that reads "...data-driven analysis of
-// sales trends...", or where PDF extraction has separated the two words
-// with something in between. Applies uniformly to every multi-word skill in
-// the taxonomy (technical and business alike) — not specific to any
-// particular skill. Single-word skill names are skipped here since exact
-// whole-word matching (containsTerm) already handles them with no added
-// false-positive risk.
-const FUZZY_WINDOW = 60;
-
-function fuzzyMatchesNearby(lowerText: string, tokens: string[]): boolean {
-  if (tokens.length < 2) return false;
-
-  const [anchor, ...rest] = tokens;
-  const anchorIndices = wholeWordIndices(lowerText, anchor);
-
-  for (const idx of anchorIndices) {
-    const windowStart = Math.max(0, idx - FUZZY_WINDOW);
-    const windowEnd = Math.min(lowerText.length, idx + anchor.length + FUZZY_WINDOW);
-    const window = lowerText.slice(windowStart, windowEnd);
-    if (rest.every((token) => wholeWordIndices(window, token).length > 0)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function detectSkills(lowerText: string): Skill[] {
-  const allSkills = [...mockSkillTaxonomy.technical, ...mockSkillTaxonomy.business];
-  const matched: Skill[] = [];
-  const seen = new Set<string>();
-
-  for (const skill of allSkills) {
-    if (containsTerm(lowerText, skill.name)) {
-      seen.add(skill.name);
-      matched.push(skill);
-    }
-  }
-
-  for (const [alias, canonicalName] of Object.entries(SKILL_ALIASES)) {
-    if (seen.has(canonicalName)) continue;
-    if (!containsTerm(lowerText, alias)) continue;
-
-    const skill = allSkills.find((candidate) => candidate.name === canonicalName);
-    if (skill) {
-      seen.add(skill.name);
-      matched.push(skill);
-    }
-  }
-
-  for (const skill of allSkills) {
-    if (seen.has(skill.name)) continue;
-    const tokens = significantTokens(skill.name);
-    if (fuzzyMatchesNearby(lowerText, tokens)) {
-      seen.add(skill.name);
-      matched.push(skill);
-    }
-  }
-
-  return matched;
-}
-
 function detectYearsExperience(text: string): number {
   const match = text.match(/(\d+)\+?\s*years?/i);
   return match ? parseInt(match[1], 10) : 3;
 }
 
-function detectIndustries(lowerText: string): string[] {
-  const found = new Set<string>();
-  for (const [keyword, label] of Object.entries(INDUSTRY_KEYWORDS)) {
-    if (lowerText.includes(keyword)) {
-      found.add(label);
+// Structural formatting words, not occupations — used only to reject a
+// line that's clearly a resume section header rather than a job title
+// (e.g. if line 2 happens to be "Skills" because there was no name line).
+const NON_TITLE_LINE_WORDS = new Set([
+  'skills', 'experience', 'education', 'summary', 'objective', 'contact',
+  'references', 'certifications', 'projects', 'publications', 'awards',
+  'profile', 'about', 'employment', 'history', 'qualifications',
+]);
+
+// Explicit label wins over everything — the resume is telling us directly
+// what to call this. Matches "Title:", "Role:", "Current Role:", "Job
+// Title:", "Position:", anywhere in the document.
+const TITLE_LABEL_PATTERN = /^(?:current\s+)?(?:job\s+)?(?:title|role|position)\s*:\s*(.+)$/i;
+
+function looksLikeTitleLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length < 2 || trimmed.length > 60) return false;
+  // Digits/@ rule out phone numbers, emails, dates, and "8 years..." lines.
+  if (/[@\d]/.test(trimmed)) return false;
+  const words = trimmed.split(/\s+/);
+  if (words.length > 6) return false;
+  if (NON_TITLE_LINE_WORDS.has(trimmed.toLowerCase().replace(/:$/, ''))) return false;
+  return true;
+}
+
+// Preserves whatever professional title the resume itself states, rather
+// than inferring one from skills — open-ended by construction: never
+// matched against a fixed occupation list, so any title (Marine Biologist,
+// Journalist, Museum Curator, ...) is captured as-written or not at all.
+// Deliberately conservative — when neither signal is confident, returns
+// undefined, which is exactly today's (unset) behavior, so this can only
+// add information, never regress a case that worked before.
+function detectLikelyRole(text: string): string | undefined {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    const match = line.match(TITLE_LABEL_PATTERN);
+    if (match) {
+      const candidate = match[1].trim().replace(/[.,;]+$/, '');
+      if (candidate) return candidate;
     }
   }
-  return found.size > 0 ? Array.from(found) : ['General Business'];
+
+  // Common convention: name on line 1, title on line 2 — only trusted when
+  // it reads like a short title, not a tagline/contact line/section header.
+  if (lines.length >= 2 && looksLikeTitleLine(lines[1])) {
+    return lines[1];
+  }
+
+  return undefined;
 }
 
 function detectSeniority(yearsExperience: number): string {

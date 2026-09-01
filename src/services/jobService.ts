@@ -1,7 +1,13 @@
-import type { JobOpportunity, Skill } from '../types'
-import { mockRemoteJobs, mockSkillTaxonomy } from './mockData'
+import type { JobOpportunity } from '../types'
+import { mockRemoteJobs } from './mockData'
+import { detectSkills } from './skillExtractionService'
+import { fetchWithRetry } from '../utils/fetchWithRetry'
+import { formatSalary } from './salaryFormatting'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+// Optional-chained so this module can also be imported under plain Node
+// (tests) without throwing at module-load time — see providers/adzunaProvider.ts.
+const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:3000'
+const FETCH_TIMEOUT_MS = Number(import.meta.env?.VITE_JOB_FETCH_TIMEOUT_MS) || 10_000
 
 interface AdzunaJob {
   id: string | number
@@ -23,34 +29,13 @@ interface AdzunaResponse {
   count: number
 }
 
-const allSkills: Skill[] = [
-  ...mockSkillTaxonomy.technical,
-  ...mockSkillTaxonomy.business,
-]
-
-function detectSkills(text: string): Skill[] {
-  const normalizedText = text.toLowerCase()
-
-  return allSkills.filter((skill) => {
-    return normalizedText.includes(skill.name.toLowerCase())
-  })
-}
-
-function formatSalary(job: AdzunaJob): string {
-  if (job.salary_min && job.salary_max) {
-    return `${job.salary_min}-${job.salary_max}`
-  }
-
-  if (job.salary_min) {
-    return `From ${job.salary_min}`
-  }
-
-  if (job.salary_max) {
-    return `Up to ${job.salary_max}`
-  }
-
-  return 'Salary not specified by employer'
-}
+// Re-exported so existing call sites (mapAdzunaJob below, and
+// jobAggregatorService.ts's Job -> JobOpportunity mapping boundary for jobs
+// sourced from the other providers) keep working unchanged, while the
+// actual detection logic — including the alias table and fuzzy matching
+// resume parsing already had — now lives in one shared place
+// (skillExtractionService.ts) instead of two drifting implementations.
+export { detectSkills }
 
 function mapAdzunaJob(job: AdzunaJob): JobOpportunity {
   const text = `${job.title} ${job.description || ''}`
@@ -60,7 +45,7 @@ function mapAdzunaJob(job: AdzunaJob): JobOpportunity {
     id: `adzuna_${job.id}`,
     title: job.title,
     company: job.company?.display_name || 'Company not listed',
-    salaryRange: formatSalary(job),
+    salaryRange: formatSalary({ salaryMin: job.salary_min, salaryMax: job.salary_max }),
     timezone: job.location?.display_name || 'Location not specified',
     matchScore: 0,
     requiredSkills,
@@ -155,7 +140,9 @@ export async function loadJobOpportunities({
       params.set('where', where)
     }
 
-    const response = await fetch(`${API_URL}/api/jobs?${params.toString()}`)
+    const response = await fetchWithRetry(`${API_URL}/api/jobs?${params.toString()}`, {
+      timeoutMs: FETCH_TIMEOUT_MS,
+    })
 
     if (!response.ok) {
       return errorResult(`Job API returned ${response.status}`)

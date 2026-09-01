@@ -1,5 +1,6 @@
 import type { ResumeProfile, Skill, JobOpportunity, CareerRecommendation } from '../types';
 import { mockRemoteJobs, mockFreelanceGigs } from './mockData';
+import { classifyOccupationCompatibility, type OccupationCompatibilityResult } from './occupationMatchingService';
 
 // ---------------------------------------------------------------------------
 // Scoring weights — transparent, deterministic, no random inputs.
@@ -67,6 +68,11 @@ interface JobScore {
   matchedSkills: Skill[];
   missingSkills: Skill[];
   matchedBusinessSkills: Skill[];
+  // Exposed for callers that want the reasoning behind a score adjustment
+  // (e.g. future explanation work) — never read by buildReasons()/
+  // buildRecommendedAction() below today, so it changes no existing
+  // wording. See occupationMatchingService.ts.
+  occupationCompatibility: OccupationCompatibilityResult;
 }
 
 function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
@@ -100,12 +106,33 @@ function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
   const transferableScore =
     businessRequired.length === 0 ? 50 : (matchedBusinessSkills.length / businessRequired.length) * 100;
 
-  const matchScore = Math.round(
+  // Unchanged from before this file's occupation-awareness fix — every
+  // existing input/weight is exactly as it was.
+  const rawScore = Math.round(
     skillMatchPercent * WEIGHT_SKILL_MATCH +
       experienceScore * WEIGHT_EXPERIENCE +
       industryScore * WEIGHT_INDUSTRY +
       transferableScore * WEIGHT_TRANSFERABLE
   );
+
+  // Occupation/domain compatibility is a GATE applied to the score above,
+  // not a 5th additive weight — an additive term could still let raw
+  // skill overlap dominate (e.g. a Marine Biologist matching Python/SQL
+  // against a Data Analyst posting), which is exactly the failure this
+  // closes. same_domain and unknown apply no adjustment at all — a
+  // candidate whose occupation can't be determined is never penalized,
+  // and the existing skill-based score keeps working exactly as before.
+  const occupationCompatibility = classifyOccupationCompatibility(
+    profile.likelyRole,
+    profile.industries,
+    job.title,
+    job.description
+  );
+  let matchScore = Math.round(rawScore * occupationCompatibility.multiplier);
+  if (occupationCompatibility.cap !== undefined) {
+    matchScore = Math.min(matchScore, occupationCompatibility.cap);
+  }
+  matchScore = Math.max(0, Math.min(100, matchScore));
 
   return {
     matchScore,
@@ -117,6 +144,7 @@ function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
     matchedSkills,
     missingSkills,
     matchedBusinessSkills,
+    occupationCompatibility,
   };
 }
 
@@ -207,6 +235,9 @@ export function getCareerRecommendations(
       matchedSkills: score.matchedSkills,
       recommendedAction: buildRecommendedAction(score.matchScore, score.missingSkills, job.company),
       applyUrl: job.applyUrl,
+      postedAt: job.postedAt,
+      source: job.source,
+      occupationCategory: score.occupationCompatibility.category,
     };
   });
 

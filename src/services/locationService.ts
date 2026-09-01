@@ -225,22 +225,108 @@ export async function resolveDestination(rawInput: string): Promise<ResolvedLoca
 }
 
 // ---------------------------------------------------------------------------
-// Adzuna country-support check — deliberately separate from location
-// resolution above. This answers "does the Adzuna API cover this country at
-// all," not "where is this place." It is API-capability data (Adzuna's own
-// documented coverage), not a city/country guess. Sourced from Adzuna's
-// publicly documented country list; re-verify against
-// https://developer.adzuna.com before relying on this in production — their
-// docs are a JS-rendered app that couldn't be scraped automatically while
-// writing this, so this list is best-effort, not confirmed live.
+// Explicit-destination resolution — PivotPartner's destination model is
+// global and is never limited by any one job-search provider's coverage
+// (provider-specific support, e.g. Adzuna's country list, lives entirely
+// inside that provider's own adapter — see providers/adzunaProvider.ts —
+// and must never reject or gate what a user can select here).
+//
+// Unlike resolveDestination() above, the country is never guessed from
+// free text: the caller (Career & Income's destination fields) already
+// requires the user to explicitly choose a country (e.g. from
+// src/data/countries.ts) and separately type a city/region. Nominatim is
+// used only to validate/enrich that city text against the country already
+// chosen — deriving a region where possible — never to determine the
+// country itself, and never to override what the user selected.
 // ---------------------------------------------------------------------------
 
-export const ADZUNA_SUPPORTED_COUNTRY_CODES: readonly string[] = [
-  'gb', 'us', 'at', 'au', 'br', 'ca', 'de', 'fr', 'in', 'it',
-  'mx', 'nl', 'nz', 'pl', 'ru', 'sg', 'za', 'es', 'se', 'ch',
-];
+export interface DestinationInput {
+  // ISO-3166-1 alpha-2, lowercase — from the user's explicit country
+  // selection (src/data/countries.ts), not inferred from geocoding.
+  countryCode: string;
+  // Display name paired with countryCode, from that same selection —
+  // passed through as-is rather than re-derived from a Nominatim result,
+  // so it always matches exactly what the user picked.
+  countryName: string;
+  // Free text the user typed for the city/region within that country.
+  // May be empty for a country-only (region-wide) destination.
+  cityOrRegion: string;
+}
 
-export function isAdzunaSupportedCountry(countryCode: string | undefined | null): boolean {
-  if (!countryCode) return false;
-  return ADZUNA_SUPPORTED_COUNTRY_CODES.includes(countryCode.toLowerCase());
+export async function resolveDestinationFromParts(input: DestinationInput): Promise<ResolvedLocation> {
+  const countryCode = input.countryCode.trim().toLowerCase();
+  const countryName = input.countryName.trim();
+  const cityOrRegion = input.cityOrRegion.trim();
+
+  if (!countryCode || !countryName) {
+    return {
+      originalInput: cityOrRegion,
+      isRemote: false,
+      confidence: 'none',
+      error: 'No destination country was provided.',
+    };
+  }
+
+  if (!cityOrRegion) {
+    // Country-only destination — valid on its own (a nationwide search),
+    // nothing to validate/enrich via Nominatim without a city to look up.
+    return {
+      originalInput: '',
+      isRemote: false,
+      countryName,
+      countryCode,
+      confidence: 'high',
+    };
+  }
+
+  let results: NominatimResult[];
+  try {
+    results = await queryNominatim(`${cityOrRegion}, ${countryName}`);
+  } catch {
+    // Validation/enrichment failed (network error, etc.) — the user's
+    // explicit country + typed city are still a valid destination on
+    // their own; just without a derived region.
+    return {
+      originalInput: cityOrRegion,
+      isRemote: false,
+      city: cityOrRegion,
+      countryName,
+      countryCode,
+      confidence: 'medium',
+    };
+  }
+
+  const candidates = (results ?? [])
+    .map(toCandidate)
+    .filter((candidate): candidate is LocationCandidate => candidate !== null);
+
+  // Only a candidate whose OWN country matches the user's explicit
+  // selection can enrich the result — a same-named place elsewhere must
+  // never silently override the country the user chose.
+  const matching = candidates.find((candidate) => candidate.countryCode === countryCode);
+
+  if (matching) {
+    return {
+      originalInput: cityOrRegion,
+      isRemote: false,
+      city: matching.city || cityOrRegion,
+      region: matching.region,
+      countryName,
+      countryCode,
+      confidence: 'high',
+    };
+  }
+
+  // Nominatim didn't confirm this city within the selected country (typo,
+  // a very small place it doesn't index, etc.) — keep the user's own
+  // country + typed city rather than rejecting the destination; just at
+  // lower confidence, with no derived region.
+  return {
+    originalInput: cityOrRegion,
+    isRemote: false,
+    city: cityOrRegion,
+    countryName,
+    countryCode,
+    confidence: 'medium',
+  };
 }

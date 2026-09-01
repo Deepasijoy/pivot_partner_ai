@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import { rateLimit } from 'express-rate-limit'
 import fetch from 'node-fetch'
 import dotenv from 'dotenv'
 import { pathToFileURL } from 'node:url'
@@ -9,13 +10,84 @@ import {
   CLASSIFIER_SYSTEM_PROMPT,
   parseClassifierResult,
 } from './scopeGuard.js'
+import { fetchWithRetry } from './fetchWithRetry.js'
 
 dotenv.config()
 
 const app = express()
 
-app.use(cors())
+// ============================================
+// CORS — allow only the PivotPartner frontend
+// ============================================
+//
+// Falls back to the local Vite dev server so `npm run dev` + `npm run
+// server` keep working unmodified. In production, set FRONTEND_URL to the
+// deployed frontend's own origin (e.g. a Render static site URL) — never
+// hardcoded here, since that URL isn't known until the frontend is actually
+// deployed. A request from any other origin does not receive the
+// Access-Control-Allow-Origin header, so a browser blocks it from reading
+// the response; this is authorization-adjacent hardening, not
+// authentication, and is not a substitute for one.
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
+
+app.use(cors({ origin: FRONTEND_URL }))
 app.use(express.json())
+
+// ============================================
+// RATE LIMITING — caps abuse of metered upstream
+// APIs (Groq, Adzuna, JSearch), applied per route
+// rather than globally so each route's own cost
+// profile sets its own limit.
+// ============================================
+//
+// Render (like most PaaS platforms) puts the app behind exactly one reverse
+// proxy hop, which sets X-Forwarded-For to the real client IP. Trusting
+// exactly that one hop — not `true`, which would trust an arbitrary,
+// client-forgeable chain — is what lets the limiter key off the real
+// client IP in production without blindly trusting an arbitrary forwarded
+// header. See https://expressjs.com/en/guide/behind-proxies.html.
+app.set('trust proxy', 1)
+
+function rateLimited(name, windowMs, max) {
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: `Too many requests to ${name}. Please try again shortly.` },
+  })
+}
+
+// Chat is the strictest relative to /api/jobs and /api/jobs/jsearch below:
+// every request calls Groq's metered LLM API directly, the most expensive
+// call in the app per-request. 20/min still comfortably covers a real
+// back-and-forth conversation (confirmed against this repo's own
+// chatRoute.test.js, which legitimately fires 15 sequential /api/chat
+// requests from one IP) while meaningfully capping sustained abuse.
+const CHAT_RATE_LIMIT_WINDOW_MS = Number(process.env.CHAT_RATE_LIMIT_WINDOW_MS) || 60_000
+const CHAT_RATE_LIMIT_MAX = Number(process.env.CHAT_RATE_LIMIT_MAX) || 20
+
+// Adzuna and JSearch: a single Career & Income visit can trigger several
+// searches in normal use (Local/Hybrid/Remote each search independently,
+// plus a user toggling work models or retrying) — generous enough not to
+// break that, still bounded per IP.
+const JOBS_RATE_LIMIT_WINDOW_MS = Number(process.env.JOBS_RATE_LIMIT_WINDOW_MS) || 60_000
+const JOBS_RATE_LIMIT_MAX = Number(process.env.JOBS_RATE_LIMIT_MAX) || 30
+
+const JSEARCH_RATE_LIMIT_WINDOW_MS = Number(process.env.JSEARCH_RATE_LIMIT_WINDOW_MS) || 60_000
+const JSEARCH_RATE_LIMIT_MAX = Number(process.env.JSEARCH_RATE_LIMIT_MAX) || 30
+
+// Himalayas: no API key, so no per-request cost to us directly, but its
+// own public API is itself rate limited and its data only refreshes about
+// once every 24 hours (per its docs) — generous enough for normal
+// Career & Income use, still bounded per IP like every other route here.
+const HIMALAYAS_RATE_LIMIT_WINDOW_MS = Number(process.env.HIMALAYAS_RATE_LIMIT_WINDOW_MS) || 60_000
+const HIMALAYAS_RATE_LIMIT_MAX = Number(process.env.HIMALAYAS_RATE_LIMIT_MAX) || 30
+
+const chatRateLimiter = rateLimited('/api/chat', CHAT_RATE_LIMIT_WINDOW_MS, CHAT_RATE_LIMIT_MAX)
+const jobsRateLimiter = rateLimited('/api/jobs', JOBS_RATE_LIMIT_WINDOW_MS, JOBS_RATE_LIMIT_MAX)
+const jsearchRateLimiter = rateLimited('/api/jobs/jsearch', JSEARCH_RATE_LIMIT_WINDOW_MS, JSEARCH_RATE_LIMIT_MAX)
+const himalayasRateLimiter = rateLimited('/api/jobs/himalayas', HIMALAYAS_RATE_LIMIT_WINDOW_MS, HIMALAYAS_RATE_LIMIT_MAX)
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY
 const GROQ_API_URL =
@@ -24,7 +96,28 @@ const GROQ_API_URL =
 const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID
 const ADZUNA_API_KEY = process.env.ADZUNA_API_KEY
 
+// Optional — the multi-provider job aggregator's JSearch adapter degrades
+// gracefully (reports itself as "not configured", never a hard failure)
+// when this isn't set. Never required for Adzuna or the app's other
+// existing functionality.
+const JSEARCH_API_KEY = process.env.JSEARCH_API_KEY
+const JSEARCH_API_HOST = process.env.JSEARCH_API_HOST || 'jsearch.p.rapidapi.com'
+
 const MODEL = 'openai/gpt-oss-20b'
+
+// ============================================
+// OUTBOUND FETCH TIMEOUTS — every third-party call this server makes
+// (Adzuna, JSearch, Groq) is bounded so a slow/hung upstream can never
+// leave a request pending indefinitely. Each gets one bounded retry on a
+// transient failure (network error or 5xx) via fetchWithRetry — see
+// fetchWithRetry.js.
+// ============================================
+const ADZUNA_FETCH_TIMEOUT_MS = Number(process.env.ADZUNA_FETCH_TIMEOUT_MS) || 10_000
+const JSEARCH_FETCH_TIMEOUT_MS = Number(process.env.JSEARCH_FETCH_TIMEOUT_MS) || 10_000
+const HIMALAYAS_FETCH_TIMEOUT_MS = Number(process.env.HIMALAYAS_FETCH_TIMEOUT_MS) || 10_000
+// Generous relative to the job-provider timeouts above: a real LLM
+// completion can legitimately take much longer than a job-search API call.
+const GROQ_FETCH_TIMEOUT_MS = Number(process.env.GROQ_FETCH_TIMEOUT_MS) || 20_000
 
 // ============================================
 // VERIFY API KEY
@@ -340,6 +433,22 @@ Do not invent:
 - Community events or associations
 - Housing or community prices
 - Official government information
+- A skill the candidate does not have (only skills explicitly listed in
+  their profile or in a job's "has:"/"gaps:" evidence are real)
+- A skill or requirement a job or career path does not actually list
+- A match percentage, score, or fit rating different from the one already
+  computed and given to you — explain the given number, never calculate
+  your own
+- Course titles, platforms, prices, durations, or certifications beyond
+  what Career & Income's own Recommended Courses data already shows
+
+When PivotPartner's Career & Income context gives you a candidate profile,
+job, or career path with computed evidence (match percentage, matched
+skills, missing skills, occupation/domain fit, salary, course data), treat
+every one of those values as already correct and final. Your job is to
+explain, summarize, compare, and organize that evidence — not to
+recompute, second-guess, or add to it. If something relevant is not in the
+evidence you were given, say so rather than filling the gap yourself.
 
 Housing and community information PivotPartner surfaces are external
 resource links for the user to explore themselves — not verified listings,
@@ -394,7 +503,7 @@ app.get('/api/health', (req, res) => {
 // ADZUNA JOB SEARCH
 // ============================================
 
-app.get('/api/jobs', async (req, res) => {
+app.get('/api/jobs', jobsRateLimiter, async (req, res) => {
   try {
     const {
       what = 'jobs',
@@ -438,7 +547,7 @@ app.get('/api/jobs', async (req, res) => {
 
     console.log(`🔎 Adzuna job search: ${what} (${countryCode})`)
 
-    const response = await fetch(url)
+    const response = await fetchWithRetry(fetch, url, { timeoutMs: ADZUNA_FETCH_TIMEOUT_MS })
     const data = await response.json()
 
     if (!response.ok) {
@@ -460,14 +569,136 @@ app.get('/api/jobs', async (req, res) => {
 })
 
 // ============================================
+// JSEARCH JOB SEARCH (RapidAPI) — optional provider for the multi-provider
+// job aggregator. A separate route from /api/jobs above so the existing
+// Adzuna route's contract/behavior is completely unaffected by this
+// addition. Requires JSEARCH_API_KEY; when unset, responds 501 so the
+// frontend provider adapter can treat "not configured" as a clean,
+// distinguishable outcome rather than a network failure.
+// ============================================
+
+app.get('/api/jobs/jsearch', jsearchRateLimiter, async (req, res) => {
+  if (!JSEARCH_API_KEY) {
+    return res.status(501).json({
+      error: 'not_configured',
+      message: 'JSearch is not configured (missing JSEARCH_API_KEY).',
+    })
+  }
+
+  try {
+    const { what = '', where = '', country, remoteOnly, page = '1' } = req.query
+
+    if (!what || typeof what !== 'string' || !what.trim()) {
+      return res.status(400).json({
+        error: 'A "what" query is required.',
+      })
+    }
+
+    const queryText = where ? `${what} in ${where}` : String(what)
+
+    const params = new URLSearchParams({
+      query: queryText,
+      page: String(page),
+      num_pages: '1',
+    })
+
+    if (country && typeof country === 'string' && /^[a-zA-Z]{2}$/.test(country)) {
+      params.set('country', country.toLowerCase())
+    }
+
+    if (remoteOnly === 'true') {
+      params.set('remote_jobs_only', 'true')
+    }
+
+    console.log(`🔎 JSearch job search: ${queryText}`)
+
+    const response = await fetchWithRetry(fetch, `https://${JSEARCH_API_HOST}/search?${params.toString()}`, {
+      timeoutMs: JSEARCH_FETCH_TIMEOUT_MS,
+      headers: {
+        'X-RapidAPI-Key': JSEARCH_API_KEY,
+        'X-RapidAPI-Host': JSEARCH_API_HOST,
+      },
+    })
+    const data = await response.json()
+
+    if (!response.ok) {
+      console.error('❌ JSearch API Error:', data)
+
+      return res.status(response.status).json({
+        error: 'JSearch job search failed',
+      })
+    }
+
+    res.json(data)
+  } catch (error) {
+    console.error('❌ JSearch search error:', error)
+
+    res.status(500).json({
+      error: error.message || 'JSearch job search failed',
+    })
+  }
+})
+
+// ============================================
+// HIMALAYAS JOB SEARCH — optional provider for the multi-provider job
+// aggregator. Remote-only, requires no API key. Himalayas' own API has no
+// browser CORS headers, so the frontend adapter (himalayasProvider.ts)
+// must call this proxy route rather than https://himalayas.app/jobs/api/search
+// directly — same reasoning as the JSearch route above, minus the
+// credential (Himalayas needs none). Himalayas' own docs note its data
+// refreshes roughly once every 24 hours and explicitly recommend
+// server-side usage, which this route already satisfies.
+// ============================================
+
+app.get('/api/jobs/himalayas', himalayasRateLimiter, async (req, res) => {
+  try {
+    const { q = '', country, page = '1' } = req.query
+
+    const params = new URLSearchParams({ page: String(page) })
+
+    if (q && typeof q === 'string' && q.trim()) {
+      params.set('q', q)
+    }
+
+    if (country && typeof country === 'string' && /^[a-zA-Z]{2}$/.test(country)) {
+      params.set('country', country.toLowerCase())
+    }
+
+    const url = `https://himalayas.app/jobs/api/search?${params.toString()}`
+
+    console.log(`🔎 Himalayas job search: ${q || '(no query)'}${country ? ` (${country})` : ''}`)
+
+    const response = await fetchWithRetry(fetch, url, { timeoutMs: HIMALAYAS_FETCH_TIMEOUT_MS })
+    const data = await response.json()
+
+    if (!response.ok) {
+      console.error('❌ Himalayas API Error:', data)
+
+      return res.status(response.status).json({
+        error: 'Himalayas job search failed',
+      })
+    }
+
+    res.json(data)
+  } catch (error) {
+    console.error('❌ Himalayas search error:', error)
+
+    res.status(500).json({
+      error: error.message || 'Himalayas job search failed',
+    })
+  }
+})
+
+// ============================================
 // GROQ CALL HELPERS
 // (wrapped as `deps` methods so tests can inject
 // mocks without ever hitting the real Groq API)
 // ============================================
 
 async function callClassifier(latestUserMessage) {
-  const response = await fetch(GROQ_API_URL, {
+  const response = await fetchWithRetry(fetch, GROQ_API_URL, {
     method: 'POST',
+    timeoutMs: GROQ_FETCH_TIMEOUT_MS,
 
     headers: {
       Authorization: `Bearer ${GROQ_API_KEY}`,
@@ -505,8 +736,9 @@ async function callClassifier(latestUserMessage) {
 }
 
 async function callMainModel(groqMessages) {
-  const response = await fetch(GROQ_API_URL, {
+  const response = await fetchWithRetry(fetch, GROQ_API_URL, {
     method: 'POST',
+    timeoutMs: GROQ_FETCH_TIMEOUT_MS,
 
     headers: {
       Authorization: `Bearer ${GROQ_API_KEY}`,
@@ -564,7 +796,7 @@ const deps = {
 // CHAT ENDPOINT
 // ============================================
 
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', chatRateLimiter, async (req, res) => {
   try {
     const { messages, context } = req.body
 
