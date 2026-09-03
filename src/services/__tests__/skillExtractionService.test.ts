@@ -93,6 +93,49 @@ describe('extractListedSkillPhrases / buildUnknownSkill (unchanged behavior)', (
 });
 
 // ---------------------------------------------------------------------------
+// Regression: splitIntoPhrases previously only split on
+// [,;•·|\n] / a spaced hyphen — it never split on ':' or '(' / ')', so a
+// resume's own labeled "Skills:" section (the single most authoritative
+// signal in the document) produced malformed phrases like "Databases: SQL"
+// and "Python (Pandas" / "Scikit-learn)" sitting alongside the correctly-
+// detected clean forms. Fixed in skillExtractionService.ts's
+// splitIntoPhrases() — see AUDIT.md Q3/Q5 and Top 10 problem #2.
+// ---------------------------------------------------------------------------
+describe('splitIntoPhrases delimiter fix — colon-labeled sub-lists and parenthetical lists', () => {
+  test('"Databases: SQL, MySQL" — the label is discarded, not glued to the first skill', () => {
+    assert.deepEqual(extractListedSkillPhrases('Skills:\nDatabases: SQL, MySQL'), ['SQL', 'MySQL']);
+  });
+
+  test('"Python (Pandas, Scikit-learn)" — parenthetical list splits into separate skills, no dangling parens', () => {
+    assert.deepEqual(extractListedSkillPhrases('Skills:\nPython (Pandas, Scikit-learn)'), ['Python', 'Pandas', 'Scikit-learn']);
+  });
+
+  test('"Visualization & BI Tools: Power BI, DAX, Power Query" — a label with no taxonomy/alias entry is discarded, not fabricated as its own skill', () => {
+    assert.deepEqual(extractListedSkillPhrases('Skills:\nVisualization & BI Tools: Power BI, DAX, Power Query'), [
+      'Power BI',
+      'DAX',
+      'Power Query',
+    ]);
+  });
+
+  test('end-to-end via detectSkills: none of the three labels ever appear as a fabricated skill', () => {
+    const text = [
+      'Skills:',
+      'Databases: SQL, MySQL',
+      'Python (Pandas, Scikit-learn)',
+      'Visualization & BI Tools: Power BI, DAX, Power Query',
+    ].join('\n');
+    const result = names(detectSkills(text));
+    for (const expected of ['SQL', 'MySQL', 'Python', 'Power BI']) {
+      assert.ok(result.includes(expected), `expected "${expected}" to be detected`);
+    }
+    for (const label of ['Databases: SQL', 'Databases', 'Python (Pandas', 'Scikit-learn)', 'Visualization & BI Tools']) {
+      assert.ok(!result.includes(label), `"${label}" must not appear as a detected skill`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Regression: the confirmed production bug where "Your Skills" contained
 // resume-section content (job titles, employer names, dates, degree lines)
 // — root-caused to extractListedSkillPhrases's "Skills:" section scan only

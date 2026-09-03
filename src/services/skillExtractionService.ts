@@ -61,8 +61,21 @@ const MIN_PHRASE_LENGTH = 2;
 const MAX_PHRASE_LENGTH = 40; // longer reads as a sentence, not a skill name
 
 function splitIntoPhrases(chunk: string): string[] {
-  return chunk
-    .split(/[,;•·|\n]|(?:^|\s)-\s/)
+  // A colon inside a labeled section's own line is almost always a
+  // sub-label of its own ("Databases: SQL, MySQL", "Visualization & BI
+  // Tools: Power BI, DAX, Power Query") rather than part of a skill name —
+  // no taxonomy or alias entry in this codebase contains a colon. Discard
+  // everything up to and including the first colon before splitting on
+  // anything else, so the label itself is dropped outright rather than
+  // surviving as its own phrase — merely adding ':' to the delimiter class
+  // below (splitting, but keeping both sides) would still turn a label
+  // like "Visualization & BI Tools" into a fabricated general-category
+  // skill, since it has no taxonomy/alias entry to quietly resolve against
+  // the way "Databases" happens to.
+  const withoutLeadingLabel = chunk.includes(':') ? chunk.slice(chunk.indexOf(':') + 1) : chunk;
+
+  return withoutLeadingLabel
+    .split(/[,;•·|\n()]|(?:^|\s)-\s/)
     .map((phrase) => phrase.replace(/^[\s\-•·*]+|[\s.,:;]+$/g, '').trim())
     .filter((phrase) => phrase.length >= MIN_PHRASE_LENGTH && phrase.length <= MAX_PHRASE_LENGTH)
     .filter((phrase) => !/^\d+$/.test(phrase));
