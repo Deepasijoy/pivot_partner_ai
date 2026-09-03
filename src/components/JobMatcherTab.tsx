@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import type { ResumeProfile, WorkModel } from '../types';
+import React, { useEffect, useMemo, useRef } from 'react';
+import type { ResumeProfile, WorkModel, JobOpportunity } from '../types';
 import ResumeUploader from './ResumeUploader';
 import CareerProfile from './CareerProfile';
 import CareerRecommendations from './CareerRecommendations';
@@ -7,9 +7,10 @@ import SkillAnalysis from './SkillAnalysis';
 import WorkModelSelector from './WorkModelSelector';
 import { resolveDestinationFromParts, type ResolvedLocation } from '../services/locationService';
 import { deriveJobQuery } from '../services/jobQueryService';
-import { errorResult, type JobFetchResult } from '../services/jobService';
+import { errorResult, jobsForCareerGuidance, type JobFetchResult } from '../services/jobService';
 import { searchJobs } from '../services/jobAggregatorService';
 import { addWorkModelIfAbsent } from '../services/workModelSelection';
+import { rankJobsForUser } from '../services/recommendationService';
 
 // Everything Career & Income needs to remember across a visit besides the
 // parsed resume itself (which App.tsx already tracks separately). Lifted to
@@ -118,6 +119,36 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
         : remoteJobResult?.source === 'live'
           ? remoteJobResult
           : localJobResult ?? hybridJobResult ?? remoteJobResult ?? null;
+
+  // Skill Gaps/Career Paths (Tier 3) must target the same top-ranked job
+  // Recommended Paths (Tier 2) already shows for whichever work model(s)
+  // are currently selected — combining pools only to pick one target job
+  // when more than one model is active at once (e.g. local + remote both
+  // selected, or after "Explore Remote" adds remote alongside local), never
+  // merging local/hybrid/remote's own segmented display, which stays
+  // exactly as CareerRecommendations renders it below. Deliberately reads
+  // straight from the three independent search results rather than through
+  // primaryJobResult above — that fixed local>hybrid>remote priority is
+  // also relied on by CareerProfile's hero and the one-shot AI summary
+  // (onJobsResolved), and changing it here would move those two too, which
+  // wasn't asked for. rankJobsForUser (recommendationService.ts) reuses the
+  // exact same scoreJob() formula/values CareerRecommendations' own cards
+  // show, never matchingService.ts's separate calculateMatchScore formula,
+  // so the job this section targets can no longer carry a different score
+  // than the identical job shown in Recommended Paths. Memoized so this
+  // only recomputes when the underlying selection/results actually change —
+  // not on every unrelated re-render of this component.
+  const skillAnalysisJobs: JobOpportunity[] = useMemo(() => {
+    if (!parsedProfile) return [];
+
+    const activeModelJobs: JobOpportunity[] = [
+      ...(workModels.includes('local') ? localJobResult?.jobs ?? [] : []),
+      ...(workModels.includes('hybrid') ? hybridJobResult?.jobs ?? [] : []),
+      ...(workModels.includes('remote') ? remoteJobResult?.jobs ?? [] : []),
+    ];
+
+    return rankJobsForUser(parsedProfile, jobsForCareerGuidance(activeModelJobs)).slice(0, 5);
+  }, [parsedProfile, workModels, localJobResult, hybridJobResult, remoteJobResult]);
 
   // Lets "Analyze Skill Gap" (in CareerRecommendations) scroll the user down
   // to the existing Tier 3 skill-analysis section below, instead of
@@ -444,7 +475,7 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
           >
             <SkillAnalysis
               profile={parsedProfile}
-              jobs={primaryJobResult?.jobs}
+              jobs={skillAnalysisJobs}
               jobSource={primaryJobResult?.source}
               jobReason={primaryJobResult?.reason}
             />

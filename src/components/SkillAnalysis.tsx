@@ -1,17 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import type { ResumeProfile, SkillGap, CourseRecommendation, CareerPath, JobOpportunity } from '../types';
 import { recommendCourses } from '../services/skillAnalysisService';
-import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from '../services/matchingService';
-import { jobsForCareerGuidance, type JobFetchSource } from '../services/jobService';
+import { generateCareerPaths, mergeCareerPathSkillGaps } from '../services/matchingService';
+import { type JobFetchSource } from '../services/jobService';
 import { AlertCircle, TrendingUp, BookOpen } from 'lucide-react';
 
 interface SkillAnalysisProps {
   profile: ResumeProfile;
   onCareerPathsGenerated?: (paths: CareerPath[]) => void;
-  // The "best available" job-fetch result owned by JobMatcherTab — the same
-  // data CareerProfile receives. Optional so this still works if a parent
-  // hasn't wired it in yet. Skill Gaps/Courses/Career Paths below must keep
-  // working even when this is empty/errored — see jobsForCareerGuidance().
+  // Already scored (via recommendationService.ts's scoreJob(), the same
+  // formula Recommended Paths' own cards use) and ranked, combined across
+  // whichever work model(s) are currently selected — computed once by
+  // JobMatcherTab (see its skillAnalysisJobs) so this component never runs
+  // a second, separately-formulated query over a different job pool.
+  // Optional so this still works if a parent hasn't wired it in yet.
   jobs?: JobOpportunity[];
   // Whether `jobs` above is live Adzuna data, a confirmed-empty live
   // result, or an error — the match-score/opportunity labeling below
@@ -58,15 +60,16 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
   // path.recommendedAction) already exists but wasn't being shown.
   const [expandedPathId, setExpandedPathId] = useState<string | null>(null);
 
-  // No independent fetch here anymore — jobs (live, or a genuinely
-  // empty/errored result, tagged upstream by JobMatcherTab) arrive as a
-  // prop, so this is now a plain synchronous derivation. Re-runs when the
-  // prop updates, e.g. once JobMatcherTab's own fetch resolves after the
-  // initial render. jobsForCareerGuidance() supplies the existing mock
-  // substrate whenever `jobs` is empty/undefined, so this guidance keeps
-  // working with zero live listings — exactly as it always has.
+  // No independent fetch or scoring here anymore — `jobs` arrives already
+  // scored and ranked by JobMatcherTab (rankJobsForUser, combined across
+  // whichever work model(s) are currently active), so this is a plain
+  // synchronous derivation. Re-runs whenever that prop updates, e.g. once a
+  // search resolves or the user adds/removes a work model. The mock
+  // fallback for zero live listings is already applied upstream (see
+  // JobMatcherTab's skillAnalysisJobs / jobsForCareerGuidance), so this
+  // guidance keeps working with zero live listings exactly as it always has.
   useEffect(() => {
-    const matchedJobs = matchJobsForUser(profile, jobsForCareerGuidance(jobs));
+    const matchedJobs = jobs ?? [];
     const paths = generateCareerPaths(profile.skills, matchedJobs, profile.likelyRole, profile.industries);
     // Overall, profile-level gaps: the union of every generated career
     // path's own skill gaps (each already computed by calculateSkillGaps

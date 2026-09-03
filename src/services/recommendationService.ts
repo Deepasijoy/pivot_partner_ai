@@ -212,6 +212,31 @@ export interface CareerRecommendationOptions {
   jobs?: JobOpportunity[];
 }
 
+// Scores and sorts once — both getCareerRecommendations() below and
+// rankJobsForUser() build their own output shape from this same ranking, so
+// a job's position/score can never drift between the two.
+function rankJobs(profile: ResumeProfile, jobs: JobOpportunity[]): { job: JobOpportunity; score: JobScore }[] {
+  return jobs
+    .map((job) => ({ job, score: scoreJob(profile, job) }))
+    .sort((a, b) => b.score.matchScore - a.score.matchScore);
+}
+
+// The same scoreJob() ranking getCareerRecommendations() below builds its
+// "Recommended Paths" cards from, exposed as plain JobOpportunity[] (matchScore
+// + occupationCategory attached, like matchingService.ts's matchJobsForUser)
+// instead of the flattened CareerRecommendation summary — so a caller that
+// needs actual JobOpportunity objects (e.g. generateCareerPaths()) can reuse
+// this exact ranking rather than re-scoring the same jobs with
+// matchingService.ts's separate calculateMatchScore formula and getting a
+// different score for the same job.
+export function rankJobsForUser(profile: ResumeProfile, jobs: JobOpportunity[]): JobOpportunity[] {
+  return rankJobs(profile, jobs).map(({ job, score }) => ({
+    ...job,
+    matchScore: score.matchScore,
+    occupationCategory: score.occupationCompatibility.category,
+  }));
+}
+
 export function getCareerRecommendations(
   profile: ResumeProfile,
   options?: CareerRecommendationOptions
@@ -219,27 +244,23 @@ export function getCareerRecommendations(
   const jobs = options?.jobs ?? mockRemoteJobs;
   const limit = options?.limit ?? 5;
 
-  const scored: CareerRecommendation[] = jobs.map((job) => {
-    const score = scoreJob(profile, job);
+  const scored: CareerRecommendation[] = rankJobs(profile, jobs).map(({ job, score }) => ({
+    id: `rec_${job.id}`,
+    title: `Remote ${job.title}`,
+    company: job.company,
+    workModel: 'remote',
+    matchScore: score.matchScore,
+    reason: buildReasons(profile, score),
+    salaryRange: job.salaryRange,
+    opportunityCount: computeOpportunityCount(job, jobs),
+    missingSkills: score.missingSkills,
+    matchedSkills: score.matchedSkills,
+    recommendedAction: buildRecommendedAction(score.matchScore, score.missingSkills, job.company),
+    applyUrl: job.applyUrl,
+    postedAt: job.postedAt,
+    source: job.source,
+    occupationCategory: score.occupationCompatibility.category,
+  }));
 
-    return {
-      id: `rec_${job.id}`,
-      title: `Remote ${job.title}`,
-      company: job.company,
-      workModel: 'remote',
-      matchScore: score.matchScore,
-      reason: buildReasons(profile, score),
-      salaryRange: job.salaryRange,
-      opportunityCount: computeOpportunityCount(job, jobs),
-      missingSkills: score.missingSkills,
-      matchedSkills: score.matchedSkills,
-      recommendedAction: buildRecommendedAction(score.matchScore, score.missingSkills, job.company),
-      applyUrl: job.applyUrl,
-      postedAt: job.postedAt,
-      source: job.source,
-      occupationCategory: score.occupationCompatibility.category,
-    };
-  });
-
-  return scored.sort((a, b) => b.matchScore - a.matchScore).slice(0, limit);
+  return scored.slice(0, limit);
 }
