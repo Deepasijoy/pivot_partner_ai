@@ -15,6 +15,7 @@ import type { JobFetchResult } from './services/jobService'
 import { jobsForCareerGuidance } from './services/jobService'
 import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
 import { buildAiContext } from './services/aiContextService'
+import { getMatchFitBand } from './services/matchFitBand'
 import { INITIAL_CAREER_SEARCH_STATE, type CareerSearchState } from './components/JobMatcherTab'
 import { COUNTRIES } from './data/countries'
 import { useAuth } from './contexts/AuthContext'
@@ -147,7 +148,7 @@ function App() {
       role: 'assistant',
       content: `Career analysis complete!
 
-Top match: ${topPath.title} — ${topPath.matchPercentage}% fit
+Top match: ${topPath.title} — ${getMatchFitBand(topPath.matchPercentage)} fit
 ${gapsClause}
 
 Open Career & Income to see your full skill-gap breakdown and career paths.`,

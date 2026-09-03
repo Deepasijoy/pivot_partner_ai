@@ -163,7 +163,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
     // the clause entirely rather than inventing or placeholder-labeling it.
     const salaryClause = rec.salaryRange ? ` (${rec.salaryRange})` : '';
 
-    const prompt = `I'm considering this ${rec.workModel} opportunity: "${rec.title}" at ${rec.company}${salaryClause}, a ${rec.matchScore}% match for my profile. I already have: ${matched}. I'm missing: ${missing}. Based on my ${profile.yearsExperience} years of experience${experienceClause}, can you explain: why this opportunity may fit my background, my strongest matching skills for it, any important gaps or concerns, and what I should consider before applying? Base your answer only on the facts I've given above — the match percentage and skill lists are already computed, so use them as-is rather than estimating your own, and don't invent skills, requirements, or other details I haven't mentioned.`;
+    const prompt = `I'm considering this ${rec.workModel} opportunity: "${rec.title}" at ${rec.company}${salaryClause}, a ${getMatchFitBand(rec.matchScore)} match for my profile. I already have: ${matched}. I'm missing: ${missing}. Based on my ${profile.yearsExperience} years of experience${experienceClause}, can you explain: why this opportunity may fit my background, my strongest matching skills for it, any important gaps or concerns, and what I should consider before applying? Base your answer only on the facts I've given above — the match assessment and skill lists are already computed, so use them as-is rather than estimating your own, and don't invent skills, requirements, or other details I haven't mentioned.`;
 
     onSendPrompt(prompt);
   };
