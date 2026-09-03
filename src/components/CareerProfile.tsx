@@ -2,6 +2,7 @@ import React from 'react';
 import type { ResumeProfile, JobOpportunity } from '../types';
 import { getCareerRecommendations, deriveSeniority, splitSkillsByTransferability } from '../services/recommendationService';
 import { jobsForCareerGuidance, type JobFetchSource } from '../services/jobService';
+import { getMatchFitBand } from '../services/matchFitBand';
 
 interface CareerProfileProps {
   profile: ResumeProfile;
@@ -63,7 +64,7 @@ const CareerProfile: React.FC<CareerProfileProps> = ({ profile, jobs, jobSource,
           <div className="col-span-2 sm:col-span-1">
             <p className="text-xs font-medium text-[var(--text-light)] uppercase">Market Fit</p>
             <p className="mt-1 text-lg font-semibold" style={{ color: fitColor }}>
-              {marketFit}%
+              {getMatchFitBand(marketFit)}
             </p>
           </div>
           <div className="col-span-2 sm:col-span-1">

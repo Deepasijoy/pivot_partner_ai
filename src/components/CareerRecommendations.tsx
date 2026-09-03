@@ -4,6 +4,7 @@ import { getCareerRecommendations } from '../services/recommendationService';
 import { calculateSkillGaps } from '../services/skillAnalysisService';
 import { assessRemoteEligibility } from '../services/remoteEligibilityService';
 import { jobsForCareerGuidance, type JobFetchSource } from '../services/jobService';
+import { getMatchFitBand } from '../services/matchFitBand';
 import { isSafeExternalUrl } from '../utils/urlSafety';
 import { formatRelativePostedAt } from '../services/jobFreshness';
 import { TrendingUp, Zap, Globe, Award, Sparkles } from 'lucide-react';
@@ -260,7 +261,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               )}
             </div>
             <div className={`px-3 py-1.5 rounded-full text-sm font-bold ${colors.badge} whitespace-nowrap ml-3`}>
-              {rec.matchScore}%
+              {getMatchFitBand(rec.matchScore)}
             </div>
           </div>
 
@@ -415,7 +416,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               <span className="text-xs font-semibold text-[var(--text-light)] uppercase">Avg Match</span>
             </div>
             <p className="text-2xl font-bold text-[var(--primary-dark)]">
-              {Math.round(allRecs.reduce((sum, r) => sum + r.matchScore, 0) / allRecs.length)}%
+              {getMatchFitBand(Math.round(allRecs.reduce((sum, r) => sum + r.matchScore, 0) / allRecs.length))}
             </p>
           </div>
           <div className="bg-gradient-to-br from-blue-500/10 to-blue-500/5 rounded-lg p-4 border border-blue-500/20">

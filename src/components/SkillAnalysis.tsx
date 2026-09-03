@@ -3,6 +3,7 @@ import type { ResumeProfile, SkillGap, CourseRecommendation, CareerPath, JobOppo
 import { recommendCourses } from '../services/skillAnalysisService';
 import { generateCareerPaths, mergeCareerPathSkillGaps } from '../services/matchingService';
 import { type JobFetchSource } from '../services/jobService';
+import { getMatchFitBand } from '../services/matchFitBand';
 import { AlertCircle, TrendingUp, BookOpen } from 'lucide-react';
 
 interface SkillAnalysisProps {
@@ -116,7 +117,7 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
             </span>
           )}
         </div>
-        <span className="text-2xl font-semibold" style={{ color: bannerAccent }}>{matchScore}%</span>
+        <span className="text-2xl font-semibold" style={{ color: bannerAccent }}>{getMatchFitBand(matchScore)}</span>
       </div>
 
       <section>
@@ -164,7 +165,7 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
             </div>
             {careerPaths[0] && (
               <p className="mt-3 text-sm text-[var(--text-light)]">
-                You may still be well-positioned for your top match — {careerPaths[0].title} ({careerPaths[0].matchPercentage}% match).
+                You may still be well-positioned for your top match — {careerPaths[0].title} ({getMatchFitBand(careerPaths[0].matchPercentage)} match).
               </p>
             )}
           </>
@@ -245,7 +246,7 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-semibold text-[var(--text-dark)]">{path.title}</h3>
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${colors.bg} ${colors.text}`}>
-                    {path.matchPercentage}%
+                    {getMatchFitBand(path.matchPercentage)}
                   </span>
                 </div>
 
