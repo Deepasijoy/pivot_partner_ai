@@ -140,8 +140,11 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
         </h2>
         {skillGaps && skillGaps.length > 0 ? (
           <>
-            <p className="text-sm font-medium text-[var(--text-dark)] mb-2">
+            <p className="text-sm font-medium text-[var(--text-dark)] mb-1">
               {skillGaps.length} skill{skillGaps.length === 1 ? '' : 's'} to strengthen
+            </p>
+            <p className="text-xs text-[var(--text-light)] mb-2">
+              Timelines below are rough estimates based on skill demand level, not a personalized learning plan.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {skillGaps.map((gap) => (
@@ -171,6 +174,15 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
         <h2 className="text-lg font-semibold text-[var(--text-dark)] mb-3 flex items-center gap-2">
           <BookOpen className="text-[var(--primary-dark)]" size={20} />
           Recommended Courses
+          {recommendedCourses.length > 0 && (
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+              style={{ backgroundColor: 'var(--surface)', color: 'var(--text-light)' }}
+              title="These are illustrative course suggestions, not a live course catalog."
+            >
+              Example courses
+            </span>
+          )}
         </h2>
         {recommendedCourses.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -251,7 +263,7 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
                     {path.salaryRange}
                   </p>
                   <p className="text-[var(--text-dark)]">
-                    <span className="font-medium">Timeline:</span> {formatTimeline(path)}
+                    <span className="font-medium">Timeline (rough estimate):</span> {formatTimeline(path)}
                   </p>
                 </div>
 
@@ -260,7 +272,7 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
                     {path.skillGaps.length > 0 && (
                       <div>
                         <p className="text-xs font-semibold text-[var(--text-light)] uppercase tracking-wider mb-2">
-                          Skills to Develop
+                          Skills to Develop (rough estimates)
                         </p>
                         <div className="space-y-2">
                           {path.skillGaps.map((gap) => (

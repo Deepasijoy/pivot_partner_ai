@@ -299,7 +299,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
             {skillGaps.length > 0 && (
               <div>
                 <p className="text-xs font-semibold text-[var(--text-light)] uppercase mb-2 tracking-wider">
-                  Skills to Develop
+                  Skills to Develop (rough estimates)
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {skillGaps.map((gap) => (
