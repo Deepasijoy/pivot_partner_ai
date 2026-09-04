@@ -28,6 +28,45 @@ const skillRESTAPIs: Skill = { name: 'REST APIs', category: 'technical', demandL
 const skillCloudArchitecture: Skill = { name: 'Cloud Architecture', category: 'technical', demandLevel: 'high', proficiency: 71 };
 const skillSystemDesign: Skill = { name: 'System Design', category: 'technical', demandLevel: 'high', proficiency: 69 };
 
+// Architecture & the built environment
+const skillArchitecturalDesign: Skill = { name: 'Architectural Design', category: 'technical', demandLevel: 'high', proficiency: 82 };
+const skillBIM: Skill = { name: 'Building Information Modeling (BIM)', category: 'technical', demandLevel: 'high', proficiency: 76 };
+const skillAutoCAD: Skill = { name: 'AutoCAD', category: 'technical', demandLevel: 'high', proficiency: 80 };
+const skillRevit: Skill = { name: 'Revit', category: 'technical', demandLevel: 'medium', proficiency: 74 };
+const skillUrbanPlanning: Skill = { name: 'Urban Planning', category: 'technical', demandLevel: 'medium', proficiency: 72 };
+const skillStructuralDesign: Skill = { name: 'Structural Design', category: 'technical', demandLevel: 'medium', proficiency: 73 };
+
+// Education & teaching
+const skillCurriculumDevelopment: Skill = { name: 'Curriculum Development', category: 'technical', demandLevel: 'high', proficiency: 81 };
+const skillClassroomManagement: Skill = { name: 'Classroom Management', category: 'technical', demandLevel: 'medium', proficiency: 79 };
+const skillLessonPlanning: Skill = { name: 'Lesson Planning', category: 'technical', demandLevel: 'medium', proficiency: 80 };
+const skillInstructionalDesign: Skill = { name: 'Instructional Design', category: 'technical', demandLevel: 'high', proficiency: 77 };
+const skillStudentAssessment: Skill = { name: 'Student Assessment & Evaluation', category: 'technical', demandLevel: 'medium', proficiency: 76 };
+const skillSpecialEducation: Skill = { name: 'Special Education', category: 'technical', demandLevel: 'medium', proficiency: 75 };
+
+// Healthcare & medicine
+const skillClinicalDiagnosis: Skill = { name: 'Clinical Diagnosis', category: 'technical', demandLevel: 'high', proficiency: 85 };
+const skillPatientCare: Skill = { name: 'Patient Care', category: 'technical', demandLevel: 'very_high', proficiency: 86 };
+const skillEHR: Skill = { name: 'Electronic Health Records (EHR)', category: 'technical', demandLevel: 'high', proficiency: 74 };
+const skillClinicalDocumentation: Skill = { name: 'Clinical Documentation', category: 'technical', demandLevel: 'medium', proficiency: 75 };
+const skillPublicHealth: Skill = { name: 'Public Health', category: 'technical', demandLevel: 'medium', proficiency: 73 };
+const skillEmergencyMedicine: Skill = { name: 'Emergency Medicine', category: 'technical', demandLevel: 'medium', proficiency: 78 };
+
+// Research & academia
+const skillAcademicResearch: Skill = { name: 'Academic Research', category: 'technical', demandLevel: 'high', proficiency: 80 };
+const skillStatisticalAnalysis: Skill = { name: 'Statistical Analysis', category: 'technical', demandLevel: 'high', proficiency: 81 };
+const skillQualitativeResearch: Skill = { name: 'Qualitative Research', category: 'technical', demandLevel: 'medium', proficiency: 76 };
+const skillQuantitativeResearch: Skill = { name: 'Quantitative Research', category: 'technical', demandLevel: 'medium', proficiency: 77 };
+const skillAcademicPublishing: Skill = { name: 'Academic Publishing', category: 'technical', demandLevel: 'medium', proficiency: 72 };
+const skillLaboratoryResearch: Skill = { name: 'Laboratory Research', category: 'technical', demandLevel: 'medium', proficiency: 74 };
+
+// Engineering (non-software)
+const skillCivilEngineering: Skill = { name: 'Civil Engineering', category: 'technical', demandLevel: 'high', proficiency: 80 };
+const skillElectricalEngineering: Skill = { name: 'Electrical Engineering', category: 'technical', demandLevel: 'high', proficiency: 79 };
+const skillMechanicalEngineering: Skill = { name: 'Mechanical Engineering', category: 'technical', demandLevel: 'high', proficiency: 78 };
+const skillQAEngineering: Skill = { name: 'Quality Assurance (QA) Engineering', category: 'technical', demandLevel: 'medium', proficiency: 76 };
+const skillManufacturingProcessEngineering: Skill = { name: 'Manufacturing & Process Engineering', category: 'technical', demandLevel: 'medium', proficiency: 75 };
+
 // Business skills
 const skillFinancialModeling: Skill = { name: 'Financial Modeling', category: 'business', demandLevel: 'high', proficiency: 80 };
 const skillFinancialAnalysis: Skill = { name: 'Financial Analysis', category: 'business', demandLevel: 'high', proficiency: 82 };
@@ -55,6 +94,44 @@ const skillBusinessDevelopment: Skill = { name: 'Business Development', category
 const skillCRM: Skill = { name: 'CRM (Salesforce/HubSpot)', category: 'business', demandLevel: 'high', proficiency: 79 };
 const skillDataDrivenDecisionMaking: Skill = { name: 'Data-Driven Decision Making', category: 'business', demandLevel: 'high', proficiency: 80 };
 
+// Finance & banking operations
+const skillCreditRiskAnalysis: Skill = { name: 'Credit Risk Analysis', category: 'business', demandLevel: 'high', proficiency: 81 };
+const skillRegulatoryCompliance: Skill = { name: 'Regulatory Compliance', category: 'business', demandLevel: 'very_high', proficiency: 79 };
+const skillAuditInternalControls: Skill = { name: 'Audit & Internal Controls', category: 'business', demandLevel: 'high', proficiency: 78 };
+const skillTreasuryManagement: Skill = { name: 'Treasury Management', category: 'business', demandLevel: 'medium', proficiency: 75 };
+const skillARAPManagement: Skill = { name: 'Accounts Payable/Receivable (AR/AP)', category: 'business', demandLevel: 'medium', proficiency: 77 };
+const skillInvestmentAnalysis: Skill = { name: 'Investment Analysis', category: 'business', demandLevel: 'high', proficiency: 79 };
+const skillMISReporting: Skill = { name: 'MIS Reporting', category: 'business', demandLevel: 'high', proficiency: 80 };
+const skillPaymentsSettlements: Skill = { name: 'Payments & Settlements Operations', category: 'business', demandLevel: 'medium', proficiency: 74 };
+const skillDelinquencyCollections: Skill = { name: 'Delinquency & Collections Management', category: 'business', demandLevel: 'medium', proficiency: 73 };
+
+// Legal
+const skillLegalResearch: Skill = { name: 'Legal Research', category: 'business', demandLevel: 'medium', proficiency: 78 };
+const skillContractDrafting: Skill = { name: 'Contract Drafting & Review', category: 'business', demandLevel: 'high', proficiency: 79 };
+const skillCorporateLaw: Skill = { name: 'Corporate Law', category: 'business', demandLevel: 'medium', proficiency: 78 };
+const skillLitigation: Skill = { name: 'Litigation & Dispute Resolution', category: 'business', demandLevel: 'medium', proficiency: 76 };
+const skillIPLaw: Skill = { name: 'Intellectual Property (IP) Law', category: 'business', demandLevel: 'medium', proficiency: 74 };
+const skillDueDiligence: Skill = { name: 'Due Diligence', category: 'business', demandLevel: 'medium', proficiency: 77 };
+
+// Analyst / business analysis
+const skillBusinessAnalysis: Skill = { name: 'Business Analysis', category: 'business', demandLevel: 'high', proficiency: 80 };
+const skillRequirementsGathering: Skill = { name: 'Requirements Gathering', category: 'business', demandLevel: 'medium', proficiency: 76 };
+const skillFPA: Skill = { name: 'Financial Planning & Analysis (FP&A)', category: 'business', demandLevel: 'high', proficiency: 80 };
+
+// Sales, marketing, advertising & social media
+const skillDigitalAdvertising: Skill = { name: 'Digital Advertising (PPC/Paid Media)', category: 'business', demandLevel: 'high', proficiency: 78 };
+const skillSocialMediaManagement: Skill = { name: 'Social Media Management', category: 'business', demandLevel: 'very_high', proficiency: 80 };
+const skillSocialMediaStrategy: Skill = { name: 'Social Media Strategy', category: 'business', demandLevel: 'high', proficiency: 79 };
+const skillCommunityManagement: Skill = { name: 'Community Management', category: 'business', demandLevel: 'medium', proficiency: 76 };
+const skillInfluencerMarketing: Skill = { name: 'Influencer Marketing', category: 'business', demandLevel: 'medium', proficiency: 74 };
+const skillEmailMarketing: Skill = { name: 'Email Marketing', category: 'business', demandLevel: 'medium', proficiency: 75 };
+const skillBrandManagement: Skill = { name: 'Brand Management', category: 'business', demandLevel: 'high', proficiency: 77 };
+const skillMarketingAnalytics: Skill = { name: 'Marketing Analytics', category: 'business', demandLevel: 'high', proficiency: 78 };
+const skillCopywriting: Skill = { name: 'Copywriting', category: 'business', demandLevel: 'medium', proficiency: 77 };
+const skillMediaPlanning: Skill = { name: 'Media Planning', category: 'business', demandLevel: 'medium', proficiency: 73 };
+const skillSalesOperations: Skill = { name: 'Sales Operations', category: 'business', demandLevel: 'medium', proficiency: 75 };
+const skillAccountManagement: Skill = { name: 'Account Management', category: 'business', demandLevel: 'high', proficiency: 78 };
+
 export const mockSkillTaxonomy: { technical: Skill[]; business: Skill[] } = {
   technical: [
     skillJavaScript,
@@ -79,6 +156,35 @@ export const mockSkillTaxonomy: { technical: Skill[]; business: Skill[] } = {
     skillRESTAPIs,
     skillCloudArchitecture,
     skillSystemDesign,
+    skillArchitecturalDesign,
+    skillBIM,
+    skillAutoCAD,
+    skillRevit,
+    skillUrbanPlanning,
+    skillStructuralDesign,
+    skillCurriculumDevelopment,
+    skillClassroomManagement,
+    skillLessonPlanning,
+    skillInstructionalDesign,
+    skillStudentAssessment,
+    skillSpecialEducation,
+    skillClinicalDiagnosis,
+    skillPatientCare,
+    skillEHR,
+    skillClinicalDocumentation,
+    skillPublicHealth,
+    skillEmergencyMedicine,
+    skillAcademicResearch,
+    skillStatisticalAnalysis,
+    skillQualitativeResearch,
+    skillQuantitativeResearch,
+    skillAcademicPublishing,
+    skillLaboratoryResearch,
+    skillCivilEngineering,
+    skillElectricalEngineering,
+    skillMechanicalEngineering,
+    skillQAEngineering,
+    skillManufacturingProcessEngineering,
   ],
   business: [
     skillFinancialModeling,
@@ -106,6 +212,36 @@ export const mockSkillTaxonomy: { technical: Skill[]; business: Skill[] } = {
     skillBusinessDevelopment,
     skillCRM,
     skillDataDrivenDecisionMaking,
+    skillCreditRiskAnalysis,
+    skillRegulatoryCompliance,
+    skillAuditInternalControls,
+    skillTreasuryManagement,
+    skillARAPManagement,
+    skillInvestmentAnalysis,
+    skillMISReporting,
+    skillPaymentsSettlements,
+    skillDelinquencyCollections,
+    skillLegalResearch,
+    skillContractDrafting,
+    skillCorporateLaw,
+    skillLitigation,
+    skillIPLaw,
+    skillDueDiligence,
+    skillBusinessAnalysis,
+    skillRequirementsGathering,
+    skillFPA,
+    skillDigitalAdvertising,
+    skillSocialMediaManagement,
+    skillSocialMediaStrategy,
+    skillCommunityManagement,
+    skillInfluencerMarketing,
+    skillEmailMarketing,
+    skillBrandManagement,
+    skillMarketingAnalytics,
+    skillCopywriting,
+    skillMediaPlanning,
+    skillSalesOperations,
+    skillAccountManagement,
   ],
 };
 

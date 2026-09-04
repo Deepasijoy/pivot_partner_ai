@@ -127,8 +127,8 @@ const DOMAIN_FAMILIES: DomainFamily[] = [
   },
   {
     id: 'sales_marketing',
-    titleKeywords: ['sales manager', 'marketing manager', 'business development manager', 'account executive', 'growth marketer'],
-    hintWords: ['sales', 'marketing campaign', 'business development'],
+    titleKeywords: ['sales manager', 'marketing manager', 'business development manager', 'account executive', 'growth marketer', 'social media manager', 'digital marketing manager', 'advertising manager', 'brand manager', 'social media specialist', 'community manager'],
+    hintWords: ['sales', 'marketing campaign', 'business development', 'social media', 'advertising', 'digital marketing', 'brand'],
   },
   {
     id: 'content_strategy',
@@ -172,13 +172,44 @@ const DOMAIN_FAMILIES: DomainFamily[] = [
   },
   {
     id: 'healthcare_nursing',
-    titleKeywords: ['registered nurse', 'nurse practitioner', 'clinical nurse', 'nursing', 'physician', 'medical doctor'],
+    titleKeywords: ['registered nurse', 'nurse practitioner', 'clinical nurse', 'nursing', 'physician', 'medical doctor', 'general practitioner', 'surgeon', 'medical officer', 'family doctor'],
     hintWords: ['clinical', 'patient care', 'healthcare'],
   },
   {
     id: 'mechanical_engineering',
     titleKeywords: ['mechanical engineer', 'mechanical engineering'],
     hintWords: ['mechanical design', 'cad'],
+  },
+  {
+    id: 'civil_electrical_engineering',
+    titleKeywords: ['civil engineer', 'structural engineer', 'electrical engineer', 'site engineer', 'construction engineer'],
+    hintWords: ['civil engineering', 'electrical engineering', 'structural design', 'construction site'],
+  },
+  {
+    // Deliberately does NOT include bare "architect" — that word alone is
+    // heavily overloaded by tech titles (Software Architect, Solutions
+    // Architect, Cloud Architect, Enterprise Architect, Data Architect),
+    // and a confirmed test case (an informal "AI Engineer / Architect"
+    // title) showed bare "architect" wrongly resolving a software title
+    // into the building-architecture domain, turning an 'unknown' result
+    // into a false 'unrelated'. Only qualified building/urban-design
+    // phrasings are used here; a plain "Architect" title on a real
+    // architecture resume still falls through to the hint-word bridging
+    // check against the job description, or to 'unknown' — a safer
+    // default than a false domain assignment.
+    id: 'architecture',
+    titleKeywords: ['architectural designer', 'urban planner', 'landscape architect', 'interior architect', 'building architect', 'licensed architect', 'registered architect'],
+    hintWords: ['architecture', 'blueprint', 'building design', 'construction design'],
+  },
+  {
+    id: 'legal',
+    titleKeywords: ['lawyer', 'attorney', 'legal counsel', 'solicitor', 'paralegal', 'corporate counsel', 'legal advisor'],
+    hintWords: ['legal', 'litigation', 'contract', 'law firm'],
+  },
+  {
+    id: 'academic_research',
+    titleKeywords: ['postdoctoral researcher', 'research fellow', 'principal investigator', 'academic researcher', 'phd researcher', 'research associate'],
+    hintWords: ['research', 'academia', 'peer-reviewed', 'publication', 'grant-funded'],
   },
 ];
 
@@ -193,6 +224,11 @@ const ADJACENT_DOMAIN_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['data_analytics', 'business_operations'],
   ['finance', 'business_operations'],
   ['software_engineering', 'cloud_devops'],
+  ['architecture', 'civil_electrical_engineering'],
+  ['architecture', 'mechanical_engineering'],
+  ['legal', 'business_operations'],
+  ['academic_research', 'education'],
+  ['academic_research', 'life_sciences'],
 ];
 
 // Conservative, deliberately non-exhaustive — an industry the resume
