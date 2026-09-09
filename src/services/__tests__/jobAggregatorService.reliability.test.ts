@@ -61,25 +61,12 @@ describe('searchJobs — provider isolation (10)', () => {
         );
       }
 
-      // Remotive — succeeds with one job eligible for the destination.
-      if (href.includes('remotive.com')) {
-        return new Response(
-          JSON.stringify({
-            jobs: [
-              {
-                id: 1,
-                url: 'https://remotive.com/jobs/1',
-                title: 'Remote Data Analyst',
-                company_name: 'Beta Inc',
-                candidate_required_location: 'United Kingdom',
-                description: 'Analyze more things.',
-              },
-            ],
-          }),
-          { status: 200 }
-        );
-      }
-
+      // Remotive is fallback-only now (queried only when every other
+      // provider returns zero combined jobs) — Arbeitnow already succeeds
+      // below, so Remotive must never be called here at all. Deliberately
+      // left unmocked: if the aggregator regresses and calls it anyway,
+      // this throws and fails the test loudly instead of silently mocking
+      // around the bug.
       init?.signal?.addEventListener('abort', () => {});
       throw new Error(`Unexpected fetch: ${href}`);
     }) as typeof fetch;
@@ -91,18 +78,23 @@ describe('searchJobs — provider isolation (10)', () => {
       workModel: 'remote',
     });
 
-    assert.equal(result.source, 'live', 'two providers succeeded — this must be a live result, not error/empty');
-    assert.ok(result.jobs.length >= 2, `expected jobs from both successful providers, got ${result.jobs.length}`);
+    assert.equal(result.source, 'live', 'one healthy provider — this must be a live result, not error/empty');
+    assert.equal(result.jobs.length, 1, `expected only Arbeitnow's job, got ${result.jobs.length}`);
 
     const failed = result.providerResults.filter((r) => !r.ok);
     const succeeded = result.providerResults.filter((r) => r.ok);
     assert.ok(failed.some((r) => r.source === 'adzuna'));
     assert.ok(failed.some((r) => r.source === 'jsearch'));
     assert.ok(succeeded.some((r) => r.source === 'arbeitnow'));
-    assert.ok(succeeded.some((r) => r.source === 'remotive'));
+    assert.ok(!result.providerResults.some((r) => r.source === 'remotive'), 'Remotive must not be called when another provider already found a job');
   });
 
-  test('final production check: a persistent HTTP 5xx, a malformed response, and JSearch "not configured" all fail simultaneously — the one remaining healthy provider still produces a live result, never a false "no jobs"', async () => {
+  test('final production check: a persistent HTTP 5xx, a malformed response, and JSearch "not configured" all fail simultaneously — Remotive\'s fallback kicks in and still produces a live result, never a false "no jobs"', async () => {
+    // Every PRIMARY_PROVIDERS provider (Adzuna, Arbeitnow, JSearch,
+    // Himalayas — Himalayas unmocked below, so it also fails) returns
+    // nothing usable, so this now exercises jobAggregatorService.ts's
+    // Phase 2 fallback: Remotive is queried only because Phase 1 came back
+    // completely empty, and its result becomes the live result.
     globalThis.fetch = (async (url) => {
       const href = String(url);
 

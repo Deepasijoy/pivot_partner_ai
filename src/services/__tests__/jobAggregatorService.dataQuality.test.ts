@@ -51,17 +51,23 @@ describe('searchJobs — freshness sorting end to end (2, 3, 4)', () => {
           { status: 200 }
         );
       }
-      if (href.includes('remotive.com')) {
+      // Remotive is fallback-only now (queried only when every other
+      // provider returns zero combined jobs) — Adzuna and Arbeitnow both
+      // succeed below, so it must never be called; the "recent" job here
+      // comes from Himalayas instead, which (like Remotive previously)
+      // runs in Phase 1 alongside Adzuna/Arbeitnow, so this still proves
+      // cross-provider freshness sorting end to end.
+      if (href.includes('/api/jobs/himalayas')) {
         return new Response(
           JSON.stringify({
             jobs: [
               {
-                id: 99,
-                url: 'https://example.com/recent',
+                guid: 'recent-1',
                 title: 'Recent Remote Analyst',
-                company_name: 'New Co',
-                publication_date: daysAgoIso(1),
-                candidate_required_location: 'Worldwide',
+                companyName: 'New Co',
+                applicationLink: 'https://example.com/recent',
+                pubDate: Math.floor(Date.now() / 1000) - 1 * 24 * 60 * 60,
+                locationRestrictions: [],
               },
             ],
           }),

@@ -1,9 +1,15 @@
-// Phase 1 multi-provider job aggregation: calls every applicable provider
-// in parallel, tolerates individual provider failures, deduplicates, and
+// Multi-provider job aggregation: calls every applicable provider in
+// parallel, tolerates individual provider failures, deduplicates, and
 // applies destination/work-model geographic filtering — then maps the
 // result down to the existing JobOpportunity shape so nothing above this
 // layer (CareerRecommendations.tsx, recommendationService.ts,
 // matchingService.ts, skillAnalysisService.ts) needs to change.
+//
+// searchJobs() itself runs in two phases — Phase 1 (every provider in
+// PRIMARY_PROVIDERS below, in parallel) and a Phase 2 fallback (Remotive
+// alone, only when Phase 1 found nothing) — see the comments on
+// PRIMARY_PROVIDERS and inside searchJobs() for why Remotive is treated
+// specially.
 //
 // Deliberately does NOT touch jobService.ts's existing loadJobOpportunities
 // — that remains a fully independent, working direct-Adzuna path (see its
@@ -21,7 +27,26 @@ import { cityOrRegionMatchesLocationText, classifyRemoteEligibility } from './pr
 import { comparePostedAtDescending } from './jobFreshness';
 import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchResult } from './providers/types';
 
-const PROVIDERS: JobProvider[] = [adzunaProvider, arbeitnowProvider, remotiveProvider, jsearchProvider, himalayasProvider];
+// Every provider queried up front, in parallel, on every applicable search.
+// Remotive is deliberately NOT here — it's a fallback-only source (see
+// searchJobs()'s Phase 2 below), only ever queried when every one of these
+// returns nothing usable, never merged alongside a result that already
+// exists. It's still a full JobProvider (providers/remotiveProvider.ts)
+// and is still referenced directly by searchJobs() — just outside this
+// array. "Only call me if the others found nothing" is a fundamentally
+// different kind of condition than supports()'s "am I even relevant to
+// this destination/work-model": supports() is a static, per-call
+// predicate over ProviderSearchParams alone, evaluated before any provider
+// has fetched anything, so it has no way to see what a sibling provider's
+// live results looked like. Expressing "conditional on prior results"
+// through supports() would mean giving it visibility into other
+// providers' outcomes (breaking its contract and the parallel-fan-out
+// model this array exists for) or running the whole array sequentially
+// just to accommodate one provider — not worth it for one deliberately
+// secondary source. An explicit Phase 2 branch in searchJobs() is the
+// cleaner fit for that axis, so it lives there instead of being forced
+// into this array.
+const PRIMARY_PROVIDERS: JobProvider[] = [adzunaProvider, arbeitnowProvider, jsearchProvider, himalayasProvider];
 
 export interface AggregatedSearchParams {
   what: string;
@@ -224,6 +249,44 @@ function toJobOpportunity(job: NormalizedJob): JobOpportunity {
   };
 }
 
+// Runs every given provider in parallel and always resolves to one
+// ProviderSearchResult per provider — a provider throwing (it never should;
+// see JobProvider.search's own contract) is defense-in-depth, converted to
+// a normal ok:false result rather than rejecting the whole batch. Shared by
+// both Phase 1 (every PRIMARY_PROVIDERS provider) and Phase 2 (Remotive
+// alone) in searchJobs() below, so the isolation guarantee is identical
+// either way.
+async function runProviders(providers: JobProvider[], providerParams: ProviderSearchParams): Promise<ProviderSearchResult[]> {
+  if (providers.length === 0) return [];
+
+  const settled = await Promise.allSettled(providers.map((provider) => provider.search(providerParams)));
+
+  return settled.map((result, index) => {
+    if (result.status === 'fulfilled') return result.value;
+    const source = providers[index].id;
+    const message = result.reason instanceof Error ? result.reason.message : 'Unknown provider error';
+    console.warn(`[jobAggregatorService] provider "${source}" threw unexpectedly:`, result.reason);
+    return { source, jobs: [], ok: false, error: message };
+  });
+}
+
+function logProviderResults(results: ProviderSearchResult[]): void {
+  for (const result of results) {
+    if (!result.ok) {
+      console.warn(`[jobAggregatorService] provider "${result.source}" failed: ${result.error}`);
+    } else {
+      console.debug(`[jobAggregatorService] provider "${result.source}" returned ${result.jobs.length} job(s)`);
+    }
+  }
+}
+
+// Runs a provider batch's jobs through the same geo filter + dedup steps
+// every phase uses — kept as one small helper so Phase 1 and Phase 2 can
+// never drift into applying these two steps differently.
+function geoFilterAndDedupe(jobs: NormalizedJob[], providerParams: ProviderSearchParams): NormalizedJob[] {
+  return deduplicateJobs(filterByDestination(jobs, providerParams), providerParams.workModel);
+}
+
 export async function searchJobs(params: AggregatedSearchParams): Promise<AggregatedSearchResult> {
   if (params.workModel === 'freelance') {
     return {
@@ -249,8 +312,10 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
     timeoutMs: params.timeoutMs,
   };
 
-  const applicable = PROVIDERS.filter((provider) => provider.supports(providerParams));
-  if (applicable.length === 0) {
+  const primaryApplicable = PRIMARY_PROVIDERS.filter((provider) => provider.supports(providerParams));
+  const remotiveApplicable = remotiveProvider.supports(providerParams);
+
+  if (primaryApplicable.length === 0 && !remotiveApplicable) {
     return {
       jobs: [],
       source: 'error',
@@ -259,50 +324,52 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
     };
   }
 
-  const settled = await Promise.allSettled(applicable.map((provider) => provider.search(providerParams)));
+  // Phase 1: every applicable provider except Remotive, in parallel —
+  // the same single-phase behavior this aggregator always had, just
+  // scoped to PRIMARY_PROVIDERS.
+  const primaryResults = await runProviders(primaryApplicable, providerParams);
+  logProviderResults(primaryResults);
 
-  const providerResults: ProviderSearchResult[] = settled.map((result, index) => {
-    if (result.status === 'fulfilled') return result.value;
-    // A provider's search() should never throw (each one wraps its own
-    // work in try/catch) — this is defense-in-depth so a bug in one
-    // adapter still can't take down the others.
-    const source = applicable[index].id;
-    const message = result.reason instanceof Error ? result.reason.message : 'Unknown provider error';
-    console.warn(`[jobAggregatorService] provider "${source}" threw unexpectedly:`, result.reason);
-    return { source, jobs: [], ok: false, error: message };
-  });
+  const primaryDeduped = geoFilterAndDedupe(primaryResults.flatMap((result) => result.jobs), providerParams);
 
-  for (const result of providerResults) {
-    if (!result.ok) {
-      console.warn(`[jobAggregatorService] provider "${result.source}" failed: ${result.error}`);
-    } else {
-      console.debug(`[jobAggregatorService] provider "${result.source}" returned ${result.jobs.length} job(s)`);
-    }
+  let finalDeduped = primaryDeduped;
+  let allProviderResults = primaryResults;
+
+  // Phase 2 (fallback only): Remotive is queried ONLY when Phase 1 came
+  // back with zero usable jobs after geo filtering and dedup — never
+  // alongside a Phase 1 result that already found something. Still gated
+  // by its own supports() (remote-only), so a local/hybrid search that
+  // legitimately found nothing never pointlessly calls a provider that
+  // could never have helped it anyway. Its own results go through the
+  // exact same geo filter + dedup pipeline, independently — the task is
+  // to return Remotive's own filtered/deduped results INSTEAD of Phase 1's
+  // (empty) ones, not to merge two already-empty sets.
+  if (primaryDeduped.length === 0 && remotiveApplicable) {
+    const remotiveResults = await runProviders([remotiveProvider], providerParams);
+    logProviderResults(remotiveResults);
+    allProviderResults = [...primaryResults, ...remotiveResults];
+    finalDeduped = geoFilterAndDedupe(remotiveResults.flatMap((result) => result.jobs), providerParams);
   }
 
-  const allJobs = providerResults.flatMap((result) => result.jobs);
-  const geoFiltered = filterByDestination(allJobs, providerParams);
-  const deduped = deduplicateJobs(geoFiltered, providerParams.workModel);
-
-  const anySucceeded = providerResults.some((result) => result.ok);
+  const anySucceeded = allProviderResults.some((result) => result.ok);
   if (!anySucceeded) {
     return {
       jobs: [],
       source: 'error',
-      reason: providerResults
+      reason: allProviderResults
         .filter((r) => r.error)
         .map((r) => `${r.source}: ${r.error}`)
         .join('; ') || 'All job providers failed.',
-      providerResults,
+      providerResults: allProviderResults,
     };
   }
 
-  if (deduped.length === 0) {
+  if (finalDeduped.length === 0) {
     return {
       jobs: [],
       source: 'empty',
       reason: 'No usable jobs found across providers for this search.',
-      providerResults,
+      providerResults: allProviderResults,
     };
   }
 
@@ -310,11 +377,11 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
   // jobFreshness.ts): jobs with a valid, parseable postedAt sort newest
   // first; jobs with a missing/unparseable date are placed after all dated
   // jobs, in their original relative order (stable sort), never dropped.
-  const bySortedFreshness = [...deduped].sort((a, b) => comparePostedAtDescending(a.postedAt, b.postedAt));
+  const bySortedFreshness = [...finalDeduped].sort((a, b) => comparePostedAtDescending(a.postedAt, b.postedAt));
 
   return {
     jobs: bySortedFreshness.map(toJobOpportunity),
     source: 'live',
-    providerResults,
+    providerResults: allProviderResults,
   };
 }
