@@ -270,7 +270,9 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
           <div className="flex gap-4 mt-3 mb-1 text-sm">
             <div className="flex items-center gap-1">
               <Globe size={14} className="text-[var(--primary-dark)]" />
-              <span className="text-[var(--text-light)]">{rec.opportunityCount}+ roles</span>
+              {/* Same opportunityCount metric as the "Related Listings"
+                  summary tile above — kept consistent with that label. */}
+              <span className="text-[var(--text-light)]">{rec.opportunityCount}+ related roles</span>
             </div>
             <div className="flex items-center gap-1">
               <Award size={14} className="text-[var(--primary-dark)]" />
@@ -422,7 +424,13 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
           <div className="bg-gradient-to-br from-blue-500/10 to-blue-500/5 rounded-lg p-4 border border-blue-500/20">
             <div className="flex items-center gap-2 mb-1">
               <Award size={16} className="text-blue-600" />
-              <span className="text-xs font-semibold text-[var(--text-light)] uppercase">Opportunities</span>
+              {/* Deliberately not "Opportunities" — this sums each shown
+                  card's opportunityCount (recommendationService.ts's
+                  computeOpportunityCount), a skill-overlap count against
+                  the full search pool, not a count of additional real job
+                  openings. "Opportunities" implied more actual jobs exist
+                  than are shown; this label doesn't. */}
+              <span className="text-xs font-semibold text-[var(--text-light)] uppercase">Related Listings</span>
             </div>
             <p className="text-2xl font-bold text-blue-600">
               {allRecs.reduce((sum, r) => sum + r.opportunityCount, 0)}+
