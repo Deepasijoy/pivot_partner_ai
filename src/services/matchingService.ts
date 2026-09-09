@@ -21,7 +21,8 @@ export function matchJobsForUser(profile: ResumeProfile, jobs: JobOpportunity[] 
         profile.likelyRole,
         profile.industries,
         job.title,
-        job.description
+        job.description,
+        profile.skills
       );
       let matchScore = Math.round(rawScore * compatibility.multiplier);
       if (compatibility.cap !== undefined) {
@@ -56,7 +57,7 @@ export function matchFreelanceForUser(
       // FreelanceGig has no description field — classification relies on
       // the gig's title alone, which still catches same-domain/adjacent
       // gigs and the hint-word bridge (occupationMatchingService.ts).
-      const compatibility = classifyOccupationCompatibility(likelyRole, industries, gig.title, undefined);
+      const compatibility = classifyOccupationCompatibility(likelyRole, industries, gig.title, undefined, userSkills);
       let matchPercentage = Math.round(rawScore * compatibility.multiplier);
       if (compatibility.cap !== undefined) {
         matchPercentage = Math.min(matchPercentage, compatibility.cap);

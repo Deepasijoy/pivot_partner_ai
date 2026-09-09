@@ -126,7 +126,8 @@ function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
     profile.likelyRole,
     profile.industries,
     job.title,
-    job.description
+    job.description,
+    profile.skills
   );
   let matchScore = Math.round(rawScore * occupationCompatibility.multiplier);
   if (occupationCompatibility.cap !== undefined) {

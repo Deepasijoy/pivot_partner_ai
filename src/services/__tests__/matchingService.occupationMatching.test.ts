@@ -158,7 +158,16 @@ describe('skill-enhanced opportunity: real missing requirements are shown honest
 });
 
 describe('missing likelyRole — must not crash, existing skill matching keeps working', () => {
-  test('a profile with no likelyRole and no mappable industry scores purely on skills, unmodified', () => {
+  // Python + SQL is a clear (2-skill, unambiguous) match to the
+  // data_analytics cluster — resolveCandidateDomain() now consults skill-
+  // cluster evidence (see occupationMatchingService.ts) when likelyRole and
+  // industries give nothing usable, so this candidate correctly resolves to
+  // 'data_analytics', not null/'unknown' as before that fix. Since the job
+  // itself is also 'Data Analyst' (data_analytics), the correct category is
+  // 'same_domain' — a more accurate classification than the old
+  // placeholder 'unknown', which only ever applied because candidate-domain
+  // resolution used to ignore skills entirely.
+  test('a profile with no likelyRole and no mappable industry still resolves via a clear skill-cluster match, and does not crash', () => {
     const noRoleProfile = profile({
       skills: [skill('Python'), skill('SQL')],
       industries: ['General Business'],
@@ -171,10 +180,29 @@ describe('missing likelyRole — must not crash, existing skill matching keeps w
 
     assert.doesNotThrow(() => {
       const [match] = matchJobsForUser(noRoleProfile, [genericJob]);
-      assert.equal(match.occupationCategory, 'unknown');
+      assert.equal(match.occupationCategory, 'same_domain');
       const paths = generateCareerPaths(noRoleProfile.skills, [match]);
       assert.ok(paths.length > 0);
     });
+  });
+
+  // A genuinely ambiguous case (a single, generic skill that doesn't reach
+  // MIN_SKILL_CLUSTER_MAJORITY) must still fall through to 'unknown' exactly
+  // as before — the fix only acts on a CLEAR skill-cluster majority, never
+  // a thin one-skill signal.
+  test('a profile with a single generic skill (below the skill-cluster majority floor) still falls through to unknown', () => {
+    const thinSignalProfile = profile({
+      skills: [skill('Python')],
+      industries: ['General Business'],
+      likelyRole: undefined,
+    });
+    const genericJob = job({
+      title: 'Data Analyst',
+      requiredSkills: [skill('Python'), skill('SQL'), skill('Data Analysis'), skill('Power BI')],
+    });
+
+    const [match] = matchJobsForUser(thinSignalProfile, [genericJob]);
+    assert.equal(match.occupationCategory, 'unknown');
   });
 });
 

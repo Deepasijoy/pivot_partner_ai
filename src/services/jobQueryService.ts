@@ -114,6 +114,45 @@ function countMatchingSkills(cluster: RoleCluster, skillNames: Set<string>): num
   return cluster.skillNames.filter((name) => skillNames.has(name.toLowerCase())).length;
 }
 
+export interface DominantSkillClusterMatch {
+  // Every cluster tied for the top match count — more than one entry means
+  // a genuine tie (deriveJobQuery() below tie-breaks by industry alignment
+  // or definition order; a caller that only wants a CLEAR, unambiguous
+  // signal — see occupationMatchingService.ts's resolveCandidateDomain —
+  // should treat length > 1 as "no clear winner").
+  clusters: RoleCluster[];
+  // Shared match count across every cluster in `clusters` (0 when none
+  // matched at all).
+  matchCount: number;
+}
+
+// Finds the skill cluster(s) (ROLE_CLUSTERS above) whose skillNames overlap
+// most with the given skills — the same "which occupation do these skills
+// actually point to" computation deriveJobQuery() already does for query
+// construction, extracted so occupationMatchingService.ts's
+// resolveCandidateDomain() can reuse the identical logic (and the identical
+// cluster definitions) for candidate-domain resolution, rather than
+// maintaining a second, independent copy that could drift out of sync.
+export function findDominantSkillClusters(skills: { name: string }[]): DominantSkillClusterMatch {
+  const skillNames = new Set(skills.map((skill) => skill.name.toLowerCase()));
+  if (skillNames.size === 0) return { clusters: [], matchCount: 0 };
+
+  let bestClusters: RoleCluster[] = [];
+  let bestCount = 0;
+
+  for (const cluster of ROLE_CLUSTERS) {
+    const count = countMatchingSkills(cluster, skillNames);
+    if (count > bestCount) {
+      bestCount = count;
+      bestClusters = [cluster];
+    } else if (count === bestCount && count > 0) {
+      bestClusters.push(cluster);
+    }
+  }
+
+  return { clusters: bestClusters, matchCount: bestCount };
+}
+
 function clusterMatchesIndustry(cluster: RoleCluster, industries: string[]): boolean {
   if (!cluster.relatedIndustries) return false;
   const lowerIndustries = industries.map((industry) => industry.toLowerCase());
@@ -152,40 +191,25 @@ export function deriveJobQuery(profile: ResumeProfile): JobQueryResult {
     };
   }
 
-  const skillNames = new Set(profile.skills.map((skill) => skill.name.toLowerCase()));
   const industries = profile.industries ?? [];
+  const { clusters: bestClusters, matchCount: bestCount } = findDominantSkillClusters(profile.skills);
 
-  if (skillNames.size > 0) {
-    let bestClusters: RoleCluster[] = [];
-    let bestCount = 0;
+  if (bestCount > 0) {
+    // Tie-break by industry alignment; otherwise first-defined cluster wins
+    // (deterministic — cluster definition order, not random).
+    const industryMatch = bestClusters.find((cluster) => clusterMatchesIndustry(cluster, industries));
+    const chosen = industryMatch ?? bestClusters[0];
 
-    for (const cluster of ROLE_CLUSTERS) {
-      const count = countMatchingSkills(cluster, skillNames);
-      if (count > bestCount) {
-        bestCount = count;
-        bestClusters = [cluster];
-      } else if (count === bestCount && count > 0) {
-        bestClusters.push(cluster);
-      }
-    }
-
-    if (bestCount > 0) {
-      // Tie-break by industry alignment; otherwise first-defined cluster wins
-      // (deterministic — cluster definition order, not random).
-      const industryMatch = bestClusters.find((cluster) => clusterMatchesIndustry(cluster, industries));
-      const chosen = industryMatch ?? bestClusters[0];
-
-      const [primary, ...rest] = chosen.queryTerms;
-      return {
-        primaryQuery: applySeniorityModifier(primary, profile.seniority),
-        alternateQueries: rest,
-        source: 'skill_cluster',
-        reasoning:
-          `Matched ${bestCount} skill(s) to the "${chosen.id}" cluster` +
-          (industryMatch ? ` (tie-broken by industry match)` : bestClusters.length > 1 ? ` (tie-broken by definition order)` : '') +
-          `.`,
-      };
-    }
+    const [primary, ...rest] = chosen.queryTerms;
+    return {
+      primaryQuery: applySeniorityModifier(primary, profile.seniority),
+      alternateQueries: rest,
+      source: 'skill_cluster',
+      reasoning:
+        `Matched ${bestCount} skill(s) to the "${chosen.id}" cluster` +
+        (industryMatch ? ` (tie-broken by industry match)` : bestClusters.length > 1 ? ` (tie-broken by definition order)` : '') +
+        `.`,
+    };
   }
 
   const industryHint = industries.find((industry) => INDUSTRY_ROLE_HINTS[industry]);

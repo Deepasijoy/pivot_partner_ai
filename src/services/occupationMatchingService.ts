@@ -44,6 +44,9 @@
 // based similarity score) only touches this one file — recommendationService.ts
 // only ever sees the typed OccupationCompatibilityResult below.
 
+import type { Skill } from '../types';
+import { findDominantSkillClusters } from './jobQueryService';
+
 export type OccupationCompatibilityCategory = 'same_domain' | 'adjacent' | 'unrelated' | 'unknown';
 
 export interface OccupationCompatibilityResult {
@@ -299,34 +302,78 @@ function domainsMatchingText(normalizedText: string): Set<string> {
   return matched;
 }
 
-/**
- * Resolves the candidate's own occupation domain — `likelyRole` first (the
- * strongest, most direct signal, exactly as resumeParserService.ts
- * extracted it, never re-interpreted), falling back to a resolved
- * industry only when no role title is available at all. Returns null when
- * neither signal maps to a recognized domain family — a genuinely
- * unrecognized or absent occupation is never guessed at.
- */
-export function resolveCandidateDomain(
-  likelyRole: string | undefined,
-  industries: string[] | undefined
-): string | null {
-  if (likelyRole?.trim()) {
-    const normalizedRole = normalize(likelyRole);
-    const matched = domainsMatchingText(normalizedRole);
-    if (matched.size > 0) {
-      // A role can only be classified into one primary domain — first
-      // match in DOMAIN_FAMILIES definition order wins, deterministic.
-      return DOMAIN_FAMILIES.find((family) => matched.has(family.id))?.id ?? null;
-    }
-  }
+// A skill-cluster match only overrides an industry-derived domain when it's
+// genuinely unambiguous: a single top cluster (no tie) with at least this
+// many matching skills. Confirmed bug this guards against: a candidate with
+// 7 strong Data/BI/Finance skills and 2 incidental "...Marketing" skills
+// (Growth Marketing, Content Marketing) had their whole profile resolved to
+// 'sales_marketing' — detectIndustries()'s REINFORCEMENT_REQUIRED bar
+// (>=2 mentions) was barely satisfied by those 2 secondary skills alone,
+// even though deriveJobQuery() already correctly identified 'data_analytics'
+// as the dominant cluster (3 matches: Python/SQL/Power BI) for the exact
+// same profile. 2 is deliberately the same floor deriveJobQuery() itself
+// treats as meaningful evidence (its own tie-breaking only ever runs once
+// bestCount > 0, but a single matching skill is too thin a signal to
+// override an industry keyword hit on its own).
+const MIN_SKILL_CLUSTER_MAJORITY = 2;
 
+function resolveDomainFromLikelyRole(likelyRole: string | undefined): string | null {
+  if (!likelyRole?.trim()) return null;
+  const normalizedRole = normalize(likelyRole);
+  const matched = domainsMatchingText(normalizedRole);
+  if (matched.size === 0) return null;
+  // A role can only be classified into one primary domain — first match in
+  // DOMAIN_FAMILIES definition order wins, deterministic.
+  return DOMAIN_FAMILIES.find((family) => matched.has(family.id))?.id ?? null;
+}
+
+function resolveDomainFromIndustries(industries: string[] | undefined): string | null {
   for (const industry of industries ?? []) {
     const domainId = INDUSTRY_TO_DOMAIN[industry];
     if (domainId) return domainId;
   }
-
   return null;
+}
+
+/**
+ * Resolves the candidate's own occupation domain, in priority order:
+ * 1. `likelyRole`, when it maps directly to a known domain family — the
+ *    strongest, most explicit signal (exactly as resumeParserService.ts
+ *    extracted it, never re-interpreted).
+ * 2. A clear, unambiguous skill-cluster majority (see
+ *    MIN_SKILL_CLUSTER_MAJORITY above) — the same dominant-cluster
+ *    computation deriveJobQuery() already does for query construction
+ *    (findDominantSkillClusters, jobQueryService.ts), reused here rather
+ *    than duplicated. Deliberately checked BEFORE the industry fallback:
+ *    an industry label is a much weaker, more incidental signal (it only
+ *    takes a couple of matching keyword mentions to qualify — see
+ *    industryDetectionService.ts's REINFORCEMENT_REQUIRED) than a genuine
+ *    majority of the candidate's actual listed skills pointing to one
+ *    occupation. detectIndustries()/REINFORCEMENT_REQUIRED itself is
+ *    unchanged — this only changes which signal wins when they conflict.
+ * 3. A resolved industry (INDUSTRY_TO_DOMAIN) — the existing fallback,
+ *    still used whenever skill evidence is genuinely ambiguous (no
+ *    skills given, no cluster matched at all, or a tie between clusters).
+ * Returns null when none of the three signals resolve to a recognized
+ * domain family — a genuinely unrecognized or absent occupation is never
+ * guessed at.
+ */
+export function resolveCandidateDomain(
+  likelyRole: string | undefined,
+  industries: string[] | undefined,
+  skills?: Skill[]
+): string | null {
+  const roleDomainId = resolveDomainFromLikelyRole(likelyRole);
+  if (roleDomainId) return roleDomainId;
+
+  const skillClusterMatch = findDominantSkillClusters(skills ?? []);
+  const hasClearSkillClusterMajority =
+    skillClusterMatch.clusters.length === 1 && skillClusterMatch.matchCount >= MIN_SKILL_CLUSTER_MAJORITY;
+  if (hasClearSkillClusterMajority) {
+    return skillClusterMatch.clusters[0].id;
+  }
+
+  return resolveDomainFromIndustries(industries);
 }
 
 function resolveJobDomains(jobTitle: string, jobDescription: string): Set<string> {
@@ -358,9 +405,10 @@ export function classifyOccupationCompatibility(
   candidateLikelyRole: string | undefined,
   candidateIndustries: string[] | undefined,
   jobTitle: string,
-  jobDescription: string | undefined
+  jobDescription: string | undefined,
+  candidateSkills?: Skill[]
 ): OccupationCompatibilityResult {
-  const candidateDomainId = resolveCandidateDomain(candidateLikelyRole, candidateIndustries);
+  const candidateDomainId = resolveCandidateDomain(candidateLikelyRole, candidateIndustries, candidateSkills);
   if (!candidateDomainId) {
     return { category: 'unknown', multiplier: 1, reason: 'candidate_domain_unknown' };
   }
