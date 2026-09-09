@@ -229,6 +229,17 @@ const ADJACENT_DOMAIN_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['legal', 'business_operations'],
   ['academic_research', 'education'],
   ['academic_research', 'life_sciences'],
+  // sales_marketing had zero adjacency since the domain was first
+  // introduced (predates the taxonomy-expansion commit that broadened its
+  // own titleKeywords/hintWords) — confirmed missing-adjacency gap, not
+  // intentional: content_strategy already lists "content marketing
+  // manager" as one of its OWN titleKeywords (direct vocabulary overlap
+  // with sales_marketing), and marketing operations / growth / account
+  // management are common, well-understood real transitions to/from
+  // business_operations and customer_success.
+  ['sales_marketing', 'content_strategy'],
+  ['sales_marketing', 'business_operations'],
+  ['sales_marketing', 'customer_success'],
 ];
 
 // Conservative, deliberately non-exhaustive — an industry the resume
