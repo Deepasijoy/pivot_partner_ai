@@ -36,10 +36,22 @@ interface ArbeitnowResponse {
   data: ArbeitnowJob[];
 }
 
+function arbeitnowTitleText(job: ArbeitnowJob): string {
+  return `${job.title} ${(job.job_types ?? []).join(' ')}`.trim();
+}
+
+// Checks the title/job_types text for hybrid/country-restriction language
+// BEFORE trusting Arbeitnow's own `remote` boolean — confirmed live: a
+// listing titled "Remote Senior Accountant - Hybrid - NL/BE/DE/LU/FR" had
+// `remote: true` set anyway (true only WITHIN those specific countries),
+// which silently discarded the restriction and mislabeled a
+// country-restricted hybrid role as fully remote-from-anywhere. The text
+// signal wins whenever it says "hybrid"; `remote` is only trusted when the
+// text says nothing more specific.
 function inferWorkModel(job: ArbeitnowJob): NormalizedJob['workModel'] {
-  if (job.remote) return 'remote';
-  const text = `${job.title} ${(job.job_types ?? []).join(' ')}`.toLowerCase();
+  const text = arbeitnowTitleText(job).toLowerCase();
   if (text.includes('hybrid')) return 'hybrid';
+  if (job.remote) return 'remote';
   return 'local';
 }
 
@@ -59,6 +71,19 @@ export function mapArbeitnowJob(job: ArbeitnowJob): NormalizedJob {
     employmentType: job.job_types?.join(', '),
     applicationUrl: job.url,
     postedAt: job.created_at ? new Date(job.created_at * 1000).toISOString() : undefined,
+    // Arbeitnow gives no structured eligibility field at all (unlike
+    // Remotive's candidate_required_location or Himalayas'
+    // locationRestrictions) — the title/job_types text is the only place
+    // any restriction signal ever appears (e.g. "... Hybrid -
+    // NL/BE/DE/LU/FR"), so it's reused here instead of leaving this
+    // undefined and defaulting classifyRemoteEligibility() (geoMatch.ts)
+    // to 'unclear' unconditionally. A plain country-name/region mention in
+    // the text resolves correctly there; an abbreviated code list like
+    // "NL/BE/DE/LU/FR" still won't (geoMatch.ts matches full country/region
+    // names, not ISO codes) — that shorthand is instead caught by
+    // remoteEligibilityService.ts's own text heuristic (see its
+    // RESTRICTION_PATTERNS).
+    remoteEligibility: arbeitnowTitleText(job) || undefined,
   };
 }
 

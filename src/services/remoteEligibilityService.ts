@@ -1,14 +1,19 @@
 import type { JobOpportunity } from '../types';
 
-// Heuristically assesses what a live Adzuna listing's own title/description
-// text actually says about remote-work geographic eligibility for the
-// user's destination. Adzuna's schema has no structured eligibility field
-// (see CareerRecommendations.tsx's isVerifiedLocal comment), so this is
-// necessarily best-effort text matching over real listing content — never a
-// database of employer policies, and never a guess when the listing is
-// silent. When the listing gives no explicit signal either way, the result
-// is 'unclear', not 'supported' or 'restricted' — this function must never
-// assert eligibility (or an EOR route) that the listing didn't actually say.
+// Heuristically assesses what a live listing's own title/description text
+// actually says about remote-work geographic eligibility for the user's
+// destination. Called unconditionally by CareerRecommendations.tsx for
+// every live 'remote'-kind card regardless of which provider it came from
+// (Adzuna, Arbeitnow, Remotive, JSearch, Himalayas) — none of these give a
+// fully structured eligibility field of their own (Remotive/Himalayas give
+// a free-text/array signal handled separately by geoMatch.ts's
+// classifyRemoteEligibility; Adzuna and Arbeitnow give none at all), so
+// this is necessarily best-effort text matching over real listing content
+// — never a database of employer policies, and never a guess when the
+// listing is silent. When the listing gives no explicit signal either way,
+// the result is 'unclear', not 'supported' or 'restricted' — this function
+// must never assert eligibility (or an EOR route) that the listing didn't
+// actually say.
 
 export type RemoteEligibilityStatus = 'supported' | 'restricted' | 'eor_mentioned' | 'unclear';
 
@@ -29,11 +34,26 @@ const WORLDWIDE_PATTERN =
 // without that, a lazy match still runs to the next punctuation mark and
 // can sweep up trailing words that aren't part of the location name.
 const LOCATION_STOP = '(?:[.,;]|\\s+(?:for|and|without|who|which|role|position|at|only|residents?|candidates?)\\b|$)';
+
+// A slash-separated list of 2+ letter codes, e.g. "NL/BE/DE/LU/FR" or
+// "US/CA" — the shorthand Arbeitnow titles use in place of natural-
+// language phrasing (see arbeitnowProvider.ts's mapArbeitnowJob comment).
+// Each token is bounded to letters only, so it can never overrun into an
+// unrelated trailing word.
+const COUNTRY_CODE_LIST = '[A-Za-z]{2,3}(?:\\s*\\/\\s*[A-Za-z]{2,3})+';
+
 const RESTRICTION_PATTERNS: RegExp[] = [
   new RegExp(`must be (?:based|located|residing|a resident) in ([A-Za-z '-]+?)${LOCATION_STOP}`, 'i'),
   new RegExp(`candidates? must (?:be authorized|have the right) to work in ([A-Za-z '-]+?)${LOCATION_STOP}`, 'i'),
   new RegExp(`(?:only )?(?:open|available) to (?:residents|candidates|applicants) (?:of|in|based in) ([A-Za-z '-]+?)${LOCATION_STOP}`, 'i'),
   new RegExp(`must reside in ([A-Za-z '-]+?)${LOCATION_STOP}`, 'i'),
+  // Bracketed/hyphenated country-code shorthand, e.g. "(Hybrid NL/BE/DE/LU/FR)"
+  // or "(US/CA only)" — with or without a leading "Hybrid" label, inside
+  // parens.
+  new RegExp(`\\((?:hybrid\\s+)?(${COUNTRY_CODE_LIST})(?:\\s+only)?\\)`, 'i'),
+  // Same shorthand introduced by "Hybrid" with a hyphen/colon separator
+  // instead of parens, e.g. "Remote Senior Accountant - Hybrid - NL/BE/DE/LU/FR".
+  new RegExp(`hybrid\\s*[-:]\\s*(${COUNTRY_CODE_LIST})`, 'i'),
 ];
 
 function textMentionsCountry(text: string, countryName: string): boolean {
@@ -41,9 +61,10 @@ function textMentionsCountry(text: string, countryName: string): boolean {
 }
 
 /**
- * `job` should be a genuinely live Adzuna listing (never a mock/example
- * job — callers must gate on jobSource === 'live' before calling this).
- * `destinationCountryName` is the user's resolved relocation destination.
+ * `job` should be a genuinely live listing from any provider (never a
+ * mock/example job — callers must gate on jobSource === 'live' before
+ * calling this). `destinationCountryName` is the user's resolved
+ * relocation destination.
  * Returns null when there isn't enough to go on to say anything at all
  * (no destination known, or the listing text is empty) — no UI should be
  * shown in that case rather than guessing.
