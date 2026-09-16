@@ -85,14 +85,30 @@ const CommunityResources: React.FC<CommunityResourcesProps> = ({ destination }) 
           const searchUrl = trimmedDestination
             ? communitySearchUrl(`${category.queryPrefix} ${trimmedDestination}`)
             : null;
+          // Without a destination, this card has no link and nothing to
+          // click — it previously rendered with the exact same visual
+          // weight as a real, working card (solid surface, full-color
+          // icon), which read as a broken/dead feature rather than one
+          // that just needs a destination first. Only dims once it
+          // actually has nothing actionable; once a search link exists,
+          // it's a genuine (if lightweight) working feature and gets full
+          // visual weight back.
+          const isInert = !searchUrl;
 
           return (
             <div
               key={category.title}
-              className="bg-[var(--surface)] rounded-md p-4 border"
-              style={{ borderColor: 'var(--border-warm)' }}
+              className={`rounded-md p-4 border${isInert ? ' opacity-70' : ''}`}
+              style={{
+                backgroundColor: isInert ? 'var(--surface-2)' : 'var(--surface)',
+                borderColor: 'var(--border-warm)',
+                borderStyle: isInert ? 'dashed' : 'solid',
+              }}
             >
-              <div className="flex items-center gap-2 font-medium text-[var(--accent-indigo-strong)]">
+              <div
+                className="flex items-center gap-2 font-medium"
+                style={{ color: isInert ? 'var(--text-muted)' : 'var(--accent-indigo-strong)' }}
+              >
                 <Icon size={16} aria-hidden="true" />
                 {category.title}
               </div>
@@ -100,7 +116,7 @@ const CommunityResources: React.FC<CommunityResourcesProps> = ({ destination }) 
                 {category.detail}
               </p>
 
-              {searchUrl && (
+              {searchUrl ? (
                 <a
                   href={searchUrl}
                   target="_blank"
@@ -110,6 +126,10 @@ const CommunityResources: React.FC<CommunityResourcesProps> = ({ destination }) 
                 >
                   {category.linkLabel} →
                 </a>
+              ) : (
+                <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Add your destination to unlock this search.
+                </p>
               )}
             </div>
           );

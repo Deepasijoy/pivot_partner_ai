@@ -126,6 +126,22 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
   onSendPrompt,
 }) => {
   const [inputValue, setInputValue] = useState('');
+  // The structured "Your Move" fields used to render unconditionally,
+  // above any AI output — a first-time visitor saw a multi-field form
+  // before ever seeing the product do anything. Now it only appears once
+  // the visitor has actually started a conversation (or already has real
+  // data in these fields from a previous visit/tab, which this initializer
+  // preserves so returning users don't lose the form they were using).
+  const [hasInteracted, setHasInteracted] = useState(() =>
+    Boolean(
+      origin.trim() ||
+        destinationCountryCode ||
+        destinationCity.trim() ||
+        relocationDate ||
+        workSituation.trim() ||
+        preferredWorkModel
+    )
+  );
 
   // Derived display string for the Journey status / Next Best Action copy
   // below, which only ever needed a human-readable place name — the
@@ -140,8 +156,14 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
     event.preventDefault();
     const trimmed = inputValue.trim();
     if (!trimmed || isLoading) return;
+    setHasInteracted(true);
     onSendPrompt(trimmed);
     setInputValue('');
+  };
+
+  const handleQuickStart = (prompt: string) => {
+    setHasInteracted(true);
+    onSendPrompt(prompt);
   };
 
   return (
@@ -199,7 +221,7 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
               key={prompt}
               type="button"
               disabled={isLoading}
-              onClick={() => onSendPrompt(prompt)}
+              onClick={() => handleQuickStart(prompt)}
               className="rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 hover:border-[var(--primary)]"
               style={{ borderColor: 'var(--border-warm)', color: 'var(--text-body)' }}
             >
@@ -207,12 +229,21 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
             </button>
           ))}
         </div>
+
+        {!hasInteracted && (
+          <p className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+            We&rsquo;ll ask a few quick questions as we go — no long form up front.
+          </p>
+        )}
       </form>
 
       {/* Your Move — compact relocation profile, feeds the Journey status
           and Next Best Action below, and is stored in the same App-level
-          state as everything else here (single source of truth). */}
-      <div className="mb-12 rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+          state as everything else here (single source of truth). Appears
+          only after the visitor has started a conversation (or already had
+          data here) — see hasInteracted above. */}
+      {hasInteracted && (
+      <div className="mb-12 rounded-md border p-5 animate-slide-in" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
         <div className="flex items-center gap-2 mb-4">
           <MapPin size={15} style={{ color: 'var(--primary-dark)' }} aria-hidden="true" />
           <h2 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
@@ -235,7 +266,17 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
             />
           </div>
 
-          <div>
+          {/* pr-10 below lg keeps this field's right edge (and the
+              select's dropdown arrow) clear of the fixed floating chat
+              button (App.tsx, bottom-4 right-4, lg:hidden) — without it,
+              the button can sit directly on top of this select once a
+              conversation exists and the sheet is closed. A margin on the
+              select itself doesn't work here: with w-full, width is
+              resolved against the parent before margin is applied, so a
+              trailing margin only overflows the container instead of
+              shrinking the field — padding on the parent is what actually
+              narrows it. */}
+          <div className="pr-10 lg:pr-0">
             <label htmlFor="dashboard-destination-country" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
               Destination
             </label>
@@ -321,6 +362,7 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* Journey */}
       <div className="mb-12">

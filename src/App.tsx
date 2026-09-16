@@ -13,7 +13,8 @@ import { useGroqChat } from './hooks/useGroqChat'
 import { isActionableJobIntent, isActionableRelocationIntent } from './utils/jobIntentDetection'
 import type { JobFetchResult } from './services/jobService'
 import { jobsForCareerGuidance } from './services/jobService'
-import { matchJobsForUser, generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
+import { generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
+import { rankJobsForUser } from './services/recommendationService'
 import { buildAiContext } from './services/aiContextService'
 import { getMatchFitBand } from './services/matchFitBand'
 import { INITIAL_CAREER_SEARCH_STATE, type CareerSearchState } from './components/JobMatcherTab'
@@ -31,6 +32,14 @@ function App() {
 
   const [parsedProfile, setParsedProfile] =
     useState<ResumeProfile | null>(null)
+  // True only while parsedProfile came from Career & Income's "Try a sample
+  // resume" path (JobMatcherTab.tsx), not a real upload — lets the UI show
+  // a "you're viewing a sample" banner and lets handleProfileParsed below
+  // send an honestly-worded chat message instead of claiming a real resume
+  // was analyzed. Lives alongside parsedProfile (not local to JobMatcherTab)
+  // so it survives the user navigating away from Career & Income and back —
+  // same reasoning as careerSearchState below.
+  const [isSampleProfile, setIsSampleProfile] = useState(false)
   const [origin, setOrigin] = useState('')
   // Destination is explicit: a country the user selects (never guessed
   // from free text) plus a free-text city/region within it — see
@@ -114,18 +123,24 @@ function App() {
   // already triggers there directly.
   //
   // Also posts the one real, honest post-analysis chat summary — reusing
-  // the exact same matching/skill-gap engine (matchJobsForUser,
-  // generateCareerPaths, mergeCareerPathSkillGaps) that CareerRecommendations
-  // and SkillAnalysis already use, fed by the same canonical job-fetch
-  // result — so the chat is never out of sync with the dashboard, and never
-  // invents a matched-skills count or readiness score.
+  // the exact same matching/skill-gap engine (rankJobsForUser,
+  // generateCareerPaths, mergeCareerPathSkillGaps) that CareerRecommendations,
+  // SkillAnalysis, and JobMatcherTab's own skillAnalysisJobs already use, fed
+  // by the same canonical job-fetch result — so the chat is never out of
+  // sync with the dashboard, and never invents a matched-skills count or
+  // readiness score. Previously called matchingService.ts's matchJobsForUser
+  // (a separate calculateMatchScore formula) — FOLLOWUPS.md #1 — which could
+  // name a different "Top match"/score here than what Recommended Paths and
+  // Skill Gaps showed a moment later on screen. rankJobsForUser
+  // (recommendationService.ts) is the same scoreJob() ranking those panels
+  // already use, sliced to the same top-5 window JobMatcherTab applies.
   const handleJobsResolved = useCallback((result: JobFetchResult, models: WorkModel[]) => {
     setCareerJobs(result)
     setCareerWorkModels(models)
 
     if (!parsedProfile || careerAnalysisSent.current) return
 
-    const matchedJobs = matchJobsForUser(parsedProfile, jobsForCareerGuidance(result.jobs))
+    const matchedJobs = rankJobsForUser(parsedProfile, jobsForCareerGuidance(result.jobs)).slice(0, 5)
     const paths = generateCareerPaths(parsedProfile.skills, matchedJobs, parsedProfile.likelyRole, parsedProfile.industries)
     // Skips the honest "no relevant freelance opportunity" placeholder
     // (Step D) — announcing it as "Top match: Freelance & Consulting — 0%
@@ -372,14 +387,16 @@ Let's make your experience travel with you!`,
     }
   }
 
-  // Called when JobMatcherTab successfully analyzes a resume. Reports only
-  // facts already known at parse time (no job-matched data exists yet —
-  // that requires a work-model choice and the canonical job fetch, handled
-  // in handleJobsResolved below once it's real). Resets the one-shot
-  // career-analysis guard so a newly uploaded resume gets its own honest
-  // follow-up once its real analysis is ready.
-  const handleProfileParsed = (profile: ResumeProfile) => {
+  // Called when JobMatcherTab successfully analyzes a resume — either a
+  // real upload or the "Try a sample resume" path (isSample=true). Reports
+  // only facts already known at parse time (no job-matched data exists yet
+  // — that requires a work-model choice and the canonical job fetch,
+  // handled in handleJobsResolved below once it's real). Resets the
+  // one-shot career-analysis guard so a newly uploaded resume gets its own
+  // honest follow-up once its real analysis is ready.
+  const handleProfileParsed = (profile: ResumeProfile, isSample = false) => {
     setParsedProfile(profile)
+    setIsSampleProfile(isSample)
     careerAnalysisSent.current = false
 
     const allSkills = profile.skills || []
@@ -387,7 +404,17 @@ Let's make your experience travel with you!`,
     const aiMsg: CopilotMessage = {
       id: Date.now().toString(),
       role: 'assistant',
-      content: `Resume analyzed successfully!
+      content: isSample
+        ? `Here's a sample based on an example profile — this is how PivotPartner matches career paths and flags skill gaps.
+
+Example profile:
+• Years of experience: ${profile.yearsExperience}
+• Seniority: ${profile.seniority || 'Professional'}
+• Industries: ${profile.industries?.join(', ') || 'Various'}
+• Skills identified: ${allSkills.length}
+
+Upload your own resume in Career & Income anytime to get matched against real opportunities for your background.`
+        : `Resume analyzed successfully!
 
 Your career profile:
 • Years of experience: ${profile.yearsExperience}
@@ -409,6 +436,7 @@ Your career can travel with you.`,
   // own lifted search state (work models, job results) itself.
   const handleResetProfile = () => {
     setParsedProfile(null)
+    setIsSampleProfile(false)
   }
 
   return (
@@ -496,7 +524,10 @@ Your career can travel with you.`,
 
           <TabNavigation activeTab={activeTab as PillarTab} onTabChange={goToPillar} />
 
-          <div ref={careerScrollContainerRef} className="flex-1 overflow-y-auto">
+          {/* pb-20 on mobile keeps the last scrolled-to content clear of
+              the fixed floating chat button below (lg:hidden, so no extra
+              clearance is needed once it's off-screen at lg+). */}
+          <div ref={careerScrollContainerRef} className="flex-1 overflow-y-auto pb-20 lg:pb-0">
             {/* ============================== */}
             {/* MAIN DASHBOARD (default view) */}
             {/* ============================== */}
@@ -559,7 +590,13 @@ Your career can travel with you.`,
                       />
                     </div>
 
-                    <div>
+                    {/* pr-10 below lg keeps this field's right edge clear
+                        of the fixed floating chat button below (bottom-4
+                        right-4, lg:hidden) — see DashboardHome.tsx's
+                        matching destination select for the same fix and
+                        why it's padding on the wrapper, not margin on the
+                        select itself. */}
+                    <div className="pr-10 lg:pr-0">
                       <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
                         Moving To
                       </label>
@@ -665,6 +702,7 @@ Your career can travel with you.`,
             {activeTab === 'career' && (
               <JobMatcherTab
                 parsedProfile={parsedProfile}
+                isSampleProfile={isSampleProfile}
                 onProfileParsed={handleProfileParsed}
                 onResetProfile={handleResetProfile}
                 searchState={careerSearchState}
@@ -717,15 +755,19 @@ Your career can travel with you.`,
                     ].map((item) => {
                       const Icon = item.icon
                       return (
-                        <div key={item.label} className="bg-[var(--surface)] rounded-md p-4 border" style={{ borderColor: 'var(--border-warm)' }}>
+                        <div
+                          key={item.label}
+                          className="rounded-md p-4 border opacity-70"
+                          style={{ backgroundColor: 'var(--surface-2)', borderColor: 'var(--border-warm)', borderStyle: 'dashed' }}
+                        >
                           <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 font-medium text-[var(--accent-terracotta-strong)]">
+                            <div className="flex items-center gap-2 font-medium" style={{ color: 'var(--text-muted)' }}>
                               <Icon size={16} aria-hidden="true" />
                               {item.label}
                             </div>
                             <span
                               className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                              style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-muted)' }}
+                              style={{ backgroundColor: 'var(--surface)', color: 'var(--text-muted)' }}
                             >
                               Launching soon
                             </span>
@@ -755,8 +797,16 @@ Your career can travel with you.`,
       {/* Mobile AI copilot — floating launcher + overlay sheet, lg:hidden
           so it never appears once the inline desktop sidebar above is
           visible. Same Sidebar instance/props/state as the desktop
-          version — this is not a second chat implementation. */}
-      {!isMobileChatOpen && (
+          version — this is not a second chat implementation. Hidden on the
+          Dashboard until a conversation actually exists: the Dashboard's
+          own inline "Tell PivotPartner..." input is already a chat entry
+          point there, so showing this floating button at the same time
+          was a second, unexplained way to do the same thing — and on a
+          short mobile viewport, it could sit directly on top of the "Your
+          Move" card's destination field before the visitor had scrolled
+          at all. Once a message exists, it becomes a legitimate "reopen
+          the conversation" control, same as on every other tab. */}
+      {!isMobileChatOpen && !(activeTab === 'dashboard' && messages.length === 0) && (
         <button
           type="button"
           onClick={() => setIsMobileChatOpen(true)}

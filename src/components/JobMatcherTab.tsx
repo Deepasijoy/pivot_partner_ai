@@ -11,6 +11,7 @@ import { errorResult, jobsForCareerGuidance, type JobFetchResult } from '../serv
 import { searchJobs } from '../services/jobAggregatorService';
 import { addWorkModelIfAbsent } from '../services/workModelSelection';
 import { rankJobsForUser } from '../services/recommendationService';
+import { SAMPLE_RESUME_PROFILE } from '../data/sampleResume';
 
 // Everything Career & Income needs to remember across a visit besides the
 // parsed resume itself (which App.tsx already tracks separately). Lifted to
@@ -42,7 +43,11 @@ export const INITIAL_CAREER_SEARCH_STATE: CareerSearchState = {
 
 interface JobMatcherTabProps {
   parsedProfile: ResumeProfile | null;
-  onProfileParsed?: (profile: ResumeProfile) => void;
+  // True only while parsedProfile came from "Try a sample resume" below,
+  // not a real upload — see App.tsx's isSampleProfile for why this is
+  // lifted rather than local state here.
+  isSampleProfile?: boolean;
+  onProfileParsed?: (profile: ResumeProfile, isSample?: boolean) => void;
   // Called by "Upload Different Resume" to clear the parent's parsedProfile
   // (the profile itself lives in App.tsx, not here — see CareerSearchState
   // above for why).
@@ -72,6 +77,7 @@ interface JobMatcherTabProps {
 
 const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
   parsedProfile,
+  isSampleProfile,
   onProfileParsed,
   onResetProfile,
   searchState,
@@ -182,6 +188,23 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
 
   const handleProfileParsed = (profile: ResumeProfile) => {
     onProfileParsed?.(profile);
+  };
+
+  // "Try a sample resume" — the pre-upload commitment ask (a real PDF) was
+  // very likely the biggest single cause of Career & Income bounces: a
+  // first-time visitor saw a bare upload box and nothing else. This skips
+  // straight to the same downstream pipeline a real upload feeds (profile
+  // -> work model -> CareerProfile/CareerRecommendations/SkillAnalysis),
+  // using the pre-built SAMPLE_RESUME_PROFILE instead of running a real
+  // file through resumeParserService. 'remote' is auto-selected so results
+  // render immediately with zero extra clicks — CareerRecommendations
+  // already falls back to mockRemoteJobs (via jobsForCareerGuidance) when
+  // no destination has been resolved, so this shows genuine computed
+  // output (skills, match scores, skill gaps) without requiring a
+  // destination either.
+  const handleTrySample = () => {
+    onProfileParsed?.(SAMPLE_RESUME_PROFILE, true);
+    setWorkModels(addWorkModelIfAbsent(workModels, 'remote'));
   };
 
   const handleReset = () => {
@@ -406,13 +429,34 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
         </p>
       </div>
 
-      {/* Upload Resume */}
+      {/* Try a sample first — the default first view, so a visitor sees
+          real matching/skill-gap output before being asked to upload a
+          real file. The real upload box stays below, unchanged. */}
       {!parsedProfile && (
-        <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
-          <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-strong)' }}>
-            Upload Your Resume
-          </h3>
-          <ResumeUploader onParsed={handleProfileParsed} />
+        <div className="space-y-4">
+          <div className="rounded-lg border p-6" style={{ borderColor: 'var(--primary-dark)', backgroundColor: 'var(--primary-light)' }}>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--primary-dark)' }}>
+              See it in action first
+            </h3>
+            <p className="text-sm mb-4" style={{ color: 'var(--text-body)' }}>
+              Try a sample profile to see how PivotPartner matches career paths and flags skill gaps — no upload required.
+            </p>
+            <button
+              type="button"
+              onClick={handleTrySample}
+              className="rounded-md px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+              style={{ backgroundColor: 'var(--primary-dark)' }}
+            >
+              Try a sample resume
+            </button>
+          </div>
+
+          <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+            <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-strong)' }}>
+              Or upload your own resume
+            </h3>
+            <ResumeUploader onParsed={handleProfileParsed} />
+          </div>
         </div>
       )}
 
@@ -421,11 +465,39 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
 
       {parsedProfile && workModels.length > 0 && (
         <>
-          {/* Tier 1 — hero: overall career profile */}
+          {isSampleProfile && (
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-3"
+              style={{ borderColor: 'var(--accent-gold)', backgroundColor: 'var(--surface-2)' }}
+            >
+              <p className="text-sm font-medium" style={{ color: 'var(--text-strong)' }}>
+                You&rsquo;re viewing a sample result based on an example profile.
+              </p>
+              <button
+                type="button"
+                onClick={handleReset}
+                className="shrink-0 text-sm font-semibold underline"
+                style={{ color: 'var(--primary-dark)' }}
+              >
+                Upload your resume instead
+              </button>
+            </div>
+          )}
+
+          {/* Tier 1 — hero: overall career profile. `jobs` is
+              skillAnalysisJobs (the same unioned active-workModel pool,
+              ranked once via rankJobsForUser, that Skill Gaps below targets)
+              rather than primaryJobResult's fixed local -> hybrid -> remote
+              priority (FOLLOWUPS.md #2) — with local + remote both selected
+              and both live, the hero no longer keeps showing a local-derived
+              recommendation while Recommended Paths shows remote's stronger
+              results. jobSource/jobReason (the live/example badge) still
+              come from primaryJobResult — see FOLLOWUPS.md #3 for why that
+              part is left as-is. */}
           <section>
             <CareerProfile
               profile={parsedProfile}
-              jobs={primaryJobResult?.jobs}
+              jobs={skillAnalysisJobs}
               jobSource={primaryJobResult?.source}
               jobReason={primaryJobResult?.reason}
             />
