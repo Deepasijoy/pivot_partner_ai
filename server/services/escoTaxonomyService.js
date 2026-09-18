@@ -14,8 +14,45 @@ const DATA_DIR = path.join(__dirname, '..', 'data')
 
 const taxonomy = JSON.parse(readFileSync(path.join(DATA_DIR, 'esco-taxonomy.json'), 'utf8'))
 const customAliasesRaw = JSON.parse(readFileSync(path.join(DATA_DIR, 'esco-custom-aliases.json'), 'utf8'))
-// Strip the documentation key — everything else is alias -> skill id.
-const { _comment: _ignored, ...customAliases } = customAliasesRaw
+// Strip the documentation key — everything else is alias -> ESCO Concept URI.
+const { _comment: _ignored, ...customAliasesByUri } = customAliasesRaw
+
+// esco-custom-aliases.json pins each alias to a skill's stable ESCO Concept
+// URI, never to a compact skill:N id — those ids are just a build-time
+// counter over whichever skills survive scripts/build-esco-taxonomy.mjs's
+// category filter, so they silently shift on every rebuild whenever that
+// filter changes (this is exactly what broke SAP/credit-risk/MIS/Excel/
+// Pandas aliases when the HR carve-out was added). Resolved to the CURRENT
+// build's skill:N id here, once, at load time — and any alias whose URI
+// isn't present in the current taxonomy throws immediately rather than
+// silently resolving to nothing or, worse, a coincidentally-valid but wrong
+// id. scripts/build-esco-taxonomy.mjs already validates this same
+// alias-file-against-taxonomy invariant at build time, so this is defense
+// in depth for hand-edits to the alias file made without a full rebuild.
+const skillIdByUri = new Map(Object.entries(taxonomy.skills).map(([id, s]) => [s.escoUri, id]))
+
+function resolveCustomAliases(aliasesByUri) {
+  const resolved = {}
+  const unresolved = []
+  for (const [phrase, uri] of Object.entries(aliasesByUri)) {
+    const id = skillIdByUri.get(uri)
+    if (id) {
+      resolved[phrase] = id
+    } else {
+      unresolved.push(`"${phrase}" -> ${uri}`)
+    }
+  }
+  if (unresolved.length > 0) {
+    throw new Error(
+      `esco-custom-aliases.json has ${unresolved.length} alias(es) pointing to ESCO URI(s) not present in ` +
+        `the current esco-taxonomy.json (likely a rebuilt taxonomy that dropped/changed a skill, or a typo): ` +
+        unresolved.join('; ')
+    )
+  }
+  return resolved
+}
+
+const customAliases = resolveCustomAliases(customAliasesByUri)
 
 const MAX_NGRAM_WORDS = 8
 

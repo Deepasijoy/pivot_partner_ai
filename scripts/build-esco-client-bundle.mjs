@@ -25,7 +25,32 @@ const OUT_FILE = path.join(ROOT, 'src', 'data', 'escoTaxonomyClient.data.ts');
 
 const full = JSON.parse(readFileSync(SERVER_TAXONOMY, 'utf8'));
 const aliasesRaw = JSON.parse(readFileSync(CUSTOM_ALIASES, 'utf8'));
-const { _comment, ...customAliases } = aliasesRaw;
+const { _comment, ...aliasesByUri } = aliasesRaw;
+
+// esco-custom-aliases.json pins each alias to a skill's stable ESCO Concept
+// URI (see its own header comment) — resolved to this build's skill:N id
+// here, same as server/services/escoTaxonomyService.js does at server
+// startup, so the client bundle never ships an alias pointing at the wrong
+// skill just because build-esco-taxonomy.mjs ran with a different category
+// filter at some point. Fails loudly rather than silently dropping/
+// mis-resolving a URI that isn't in this taxonomy build.
+const skillUriToId = new Map(Object.entries(full.skills).map(([id, s]) => [s.escoUri, id]));
+const customAliases = {};
+const unresolvedAliases = [];
+for (const [phrase, uri] of Object.entries(aliasesByUri)) {
+  const id = skillUriToId.get(uri);
+  if (id) {
+    customAliases[phrase] = id;
+  } else {
+    unresolvedAliases.push(`"${phrase}" -> ${uri}`);
+  }
+}
+if (unresolvedAliases.length > 0) {
+  console.error(`ERROR: ${unresolvedAliases.length} alias(es) in ${CUSTOM_ALIASES} point to a URI not present in ${SERVER_TAXONOMY}:`);
+  for (const line of unresolvedAliases) console.error(`  ${line}`);
+  console.error('Run scripts/build-esco-taxonomy.mjs first (it validates this same file) or fix the affected alias entries.');
+  process.exit(1);
+}
 
 const skills = {};
 for (const [id, s] of Object.entries(full.skills)) {

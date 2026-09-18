@@ -16,7 +16,7 @@
 // Run: node scripts/build-esco-taxonomy.mjs
 // Output: server/data/esco-taxonomy.json
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { parseCsv } from './lib/csv.mjs';
@@ -259,3 +259,35 @@ mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(OUT_FILE, JSON.stringify(output));
 console.log(`\nWrote ${OUT_FILE}`);
 console.log(`Total items: ${output.meta.totalItems} (skills: ${output.meta.skillCount}, occupations: ${output.meta.occupationCount})`);
+
+// --- Validate server/data/esco-custom-aliases.json against this build ---
+// That file pins each alias to a skill's stable ESCO Concept URI (never a
+// skill:N id — see its own header comment for why). Failing loudly here,
+// at build time, is what makes it impossible for a taxonomy rebuild to
+// silently leave an alias pointing at a URI that no longer exists (a
+// dropped skill, a moved category boundary, a hand-edit typo) — the
+// previous incident (SAP/credit-risk/MIS/Excel/Pandas aliases all
+// resolving to the wrong skill after the HR carve-out changed which skills
+// survive the filter above) shipped exactly because nothing checked this.
+const ALIASES_FILE = path.join(OUT_DIR, 'esco-custom-aliases.json');
+const aliasesRaw = JSON.parse(readFileSync(ALIASES_FILE, 'utf8'));
+const { _comment: _aliasComment, ...aliasesByUri } = aliasesRaw;
+const knownSkillUris = new Set(Object.values(skills).map((s) => s.escoUri));
+const unresolvedAliases = Object.entries(aliasesByUri).filter(([, uri]) => !knownSkillUris.has(uri));
+
+if (unresolvedAliases.length > 0) {
+  console.error(
+    `\nERROR: ${unresolvedAliases.length} alias(es) in ${ALIASES_FILE} point to an ESCO Concept URI ` +
+      `not present in the taxonomy just built:`
+  );
+  for (const [phrase, uri] of unresolvedAliases) {
+    console.error(`  "${phrase}" -> ${uri}`);
+  }
+  console.error(
+    '\nEither this skill was genuinely dropped by a category-filter change (update or remove the ' +
+      'affected alias entries) or the URI has a typo. Refusing to leave a stale/broken alias file in ' +
+      'place — see esco-custom-aliases.json\'s own header comment for the full explanation.'
+  );
+  process.exit(1);
+}
+console.log(`Validated ${Object.keys(aliasesByUri).length} custom alias(es) against the new taxonomy — all resolve.`);
