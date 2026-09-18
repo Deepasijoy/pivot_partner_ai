@@ -272,7 +272,12 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
 
     const query = deriveJobQuery(parsedProfile);
     const aggregated = await searchJobs({
-      what: query.primaryQuery,
+      // Every candidate term, not just the single best guess — a resume
+      // whose dominant skill cluster resolves to e.g. "Data Analyst" /
+      // "Business Intelligence Analyst" / "Data Scientist" should have all
+      // three searched, not just the first, so the fetched pool isn't
+      // artificially narrowed to whichever term happened to be primary.
+      what: [query.primaryQuery, ...query.alternateQueries],
       // Falls back to the resolved region (e.g. "New Jersey") when no city
       // is available — a state/region-level destination has no
       // city/town/village/county in its resolved address, so `city` alone

@@ -49,7 +49,14 @@ import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchRe
 const PRIMARY_PROVIDERS: JobProvider[] = [adzunaProvider, arbeitnowProvider, jsearchProvider, himalayasProvider];
 
 export interface AggregatedSearchParams {
-  what: string;
+  // A ranked list of query terms to try — every term is sent to every
+  // applicable provider, in parallel, and the combined raw results go
+  // through the same geo-filter + dedup pipeline together (see
+  // searchJobs()), so the same posting surfacing under two different terms
+  // just collapses to one entry rather than being fetched twice. A plain
+  // string is still accepted (equivalent to a single-element array) so
+  // every existing caller/test keeps working unchanged.
+  what: string | string[];
   destinationCity?: string;
   destinationRegion?: string;
   destinationCountry?: string;
@@ -297,23 +304,35 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
     };
   }
 
-  if (!params.what.trim()) {
+  // Narrowed to a local const so it keeps its 'local' | 'hybrid' | 'remote'
+  // type inside the providerParamsFor closure below — TS's narrowing from
+  // the freelance check above doesn't survive a `params.workModel` access
+  // through a nested function literal, only through a local variable.
+  const workModel = params.workModel;
+
+  const queries = [
+    ...new Set((Array.isArray(params.what) ? params.what : [params.what]).map((q) => q.trim()).filter(Boolean)),
+  ];
+  if (queries.length === 0) {
     return { jobs: [], source: 'error', reason: 'No job-search query was provided.', providerResults: [] };
   }
 
-  const providerParams: ProviderSearchParams = {
-    what: params.what,
+  const providerParamsFor = (what: string): ProviderSearchParams => ({
+    what,
     destinationCity: params.destinationCity,
     destinationRegion: params.destinationRegion,
     destinationCountry: params.destinationCountry,
     destinationCountryName: params.destinationCountryName,
-    workModel: params.workModel,
+    workModel,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
-  };
+  });
 
-  const primaryApplicable = PRIMARY_PROVIDERS.filter((provider) => provider.supports(providerParams));
-  const remotiveApplicable = remotiveProvider.supports(providerParams);
+  // supports() only depends on destination/workModel (see
+  // providers/types.ts), never on `what` — safe to gate once using any
+  // query term as a stand-in.
+  const primaryApplicable = PRIMARY_PROVIDERS.filter((provider) => provider.supports(providerParamsFor(queries[0])));
+  const remotiveApplicable = remotiveProvider.supports(providerParamsFor(queries[0]));
 
   if (primaryApplicable.length === 0 && !remotiveApplicable) {
     return {
@@ -324,13 +343,21 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
     };
   }
 
-  // Phase 1: every applicable provider except Remotive, in parallel —
-  // the same single-phase behavior this aggregator always had, just
-  // scoped to PRIMARY_PROVIDERS.
-  const primaryResults = await runProviders(primaryApplicable, providerParams);
+  // Phase 1: every applicable provider, for every query term, all in
+  // parallel — every candidate query (e.g. a resume's dominant-skill-
+  // cluster alternates, not just its single best guess) gets a real
+  // provider call; the geo-filter + dedup pass below collapses the common
+  // case of the same posting surfacing under more than one term.
+  const primaryResultsByQuery = await Promise.all(
+    queries.map((what) => runProviders(primaryApplicable, providerParamsFor(what)))
+  );
+  const primaryResults = primaryResultsByQuery.flat();
   logProviderResults(primaryResults);
 
-  const primaryDeduped = geoFilterAndDedupe(primaryResults.flatMap((result) => result.jobs), providerParams);
+  const primaryDeduped = geoFilterAndDedupe(
+    primaryResults.flatMap((result) => result.jobs),
+    providerParamsFor(queries[0])
+  );
 
   let finalDeduped = primaryDeduped;
   let allProviderResults = primaryResults;
@@ -341,14 +368,21 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
   // by its own supports() (remote-only), so a local/hybrid search that
   // legitimately found nothing never pointlessly calls a provider that
   // could never have helped it anyway. Its own results go through the
-  // exact same geo filter + dedup pipeline, independently — the task is
-  // to return Remotive's own filtered/deduped results INSTEAD of Phase 1's
-  // (empty) ones, not to merge two already-empty sets.
+  // exact same geo filter + dedup pipeline, independently, for every query
+  // term too — the task is to return Remotive's own filtered/deduped
+  // results INSTEAD of Phase 1's (empty) ones, not to merge two already-
+  // empty sets.
   if (primaryDeduped.length === 0 && remotiveApplicable) {
-    const remotiveResults = await runProviders([remotiveProvider], providerParams);
+    const remotiveResultsByQuery = await Promise.all(
+      queries.map((what) => runProviders([remotiveProvider], providerParamsFor(what)))
+    );
+    const remotiveResults = remotiveResultsByQuery.flat();
     logProviderResults(remotiveResults);
     allProviderResults = [...primaryResults, ...remotiveResults];
-    finalDeduped = geoFilterAndDedupe(remotiveResults.flatMap((result) => result.jobs), providerParams);
+    finalDeduped = geoFilterAndDedupe(
+      remotiveResults.flatMap((result) => result.jobs),
+      providerParamsFor(queries[0])
+    );
   }
 
   const anySucceeded = allProviderResults.some((result) => result.ok);

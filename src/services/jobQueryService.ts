@@ -159,6 +159,26 @@ function clusterMatchesIndustry(cluster: RoleCluster, industries: string[]): boo
   return cluster.relatedIndustries.some((industry) => lowerIndustries.includes(industry.toLowerCase()));
 }
 
+// Returns the ROLE_CLUSTERS entry `role`'s own text names (a substring
+// match against that cluster's query terms, either direction) — used only
+// to sanity-check profile.likelyRole against the skill-derived cluster in
+// deriveJobQuery() below, never to choose a query term itself.
+function clusterMatchingRoleText(role: string): RoleCluster | undefined {
+  const normalizedRole = role.toLowerCase();
+  return ROLE_CLUSTERS.find((cluster) =>
+    cluster.queryTerms.some((term) => {
+      const normalizedTerm = term.toLowerCase();
+      return normalizedRole.includes(normalizedTerm) || normalizedTerm.includes(normalizedRole);
+    })
+  );
+}
+
+// A skill-cluster match this small (a single incidental shared skill) isn't
+// a strong enough signal to override an explicitly stated role — only a
+// real, multi-skill cluster match can do that. See deriveJobQuery()'s use
+// of this below.
+const MIN_CONFLICTING_SKILL_MATCH = 2;
+
 function isSeniorLevel(seniority: string | undefined): boolean {
   if (!seniority) return false;
   return /senior|lead|principal/i.test(seniority);
@@ -172,7 +192,14 @@ function applySeniorityModifier(term: string, seniority: string | undefined): st
 
 /**
  * Derives job-search terms for a resume profile, in priority order:
- * 1. profile.likelyRole, if the parser/AI already identified one.
+ * 1. profile.likelyRole, if the parser/AI already identified one AND it
+ *    doesn't flatly contradict a decisively-matched skill cluster (e.g. a
+ *    resume whose only stated "role" text turns out to name an unrelated
+ *    job family, while its actual skills are overwhelmingly a different,
+ *    clearly-matched cluster) — see MIN_CONFLICTING_SKILL_MATCH. A merely
+ *    absent or weak skill signal never overrides an explicit stated role;
+ *    this is a narrow safety net for when likelyRole itself turns out to be
+ *    unreliable, not a general preference for skills over stated roles.
  * 2. The dominant skill cluster (most matching skills), tie-broken by
  *    industry alignment.
  * 3. An industry-only hint, if no skill cluster matched but an industry did.
@@ -181,18 +208,26 @@ function applySeniorityModifier(term: string, seniority: string | undefined): st
  * only, when useful (steps 2–3), not on an already-specific likelyRole.
  */
 export function deriveJobQuery(profile: ResumeProfile): JobQueryResult {
-  if (profile.likelyRole && profile.likelyRole.trim()) {
-    const role = profile.likelyRole.trim();
-    return {
-      primaryQuery: role,
-      alternateQueries: [],
-      source: 'likely_role',
-      reasoning: `Used profile.likelyRole ("${role}") directly — the strongest available signal.`,
-    };
-  }
-
   const industries = profile.industries ?? [];
   const { clusters: bestClusters, matchCount: bestCount } = findDominantSkillClusters(profile.skills);
+
+  if (profile.likelyRole && profile.likelyRole.trim()) {
+    const role = profile.likelyRole.trim();
+    const roleCluster = clusterMatchingRoleText(role);
+    const conflictsWithSkills =
+      bestCount >= MIN_CONFLICTING_SKILL_MATCH && roleCluster !== undefined && !bestClusters.includes(roleCluster);
+
+    if (!conflictsWithSkills) {
+      return {
+        primaryQuery: role,
+        alternateQueries: [],
+        source: 'likely_role',
+        reasoning: `Used profile.likelyRole ("${role}") directly — the strongest available signal.`,
+      };
+    }
+    // Falls through to the skill-cluster logic below: `role` names a
+    // different job family than the ${bestCount} matching skills point to.
+  }
 
   if (bestCount > 0) {
     // Tie-break by industry alignment; otherwise first-defined cluster wins
@@ -208,6 +243,7 @@ export function deriveJobQuery(profile: ResumeProfile): JobQueryResult {
       reasoning:
         `Matched ${bestCount} skill(s) to the "${chosen.id}" cluster` +
         (industryMatch ? ` (tie-broken by industry match)` : bestClusters.length > 1 ? ` (tie-broken by definition order)` : '') +
+        (profile.likelyRole?.trim() ? ` — overrides stated role "${profile.likelyRole.trim()}", which named a conflicting job family` : '') +
         `.`,
     };
   }

@@ -126,15 +126,22 @@ function familyRelation(iscoA: string, iscoB: string): 'same' | 'adjacent' | 'un
 }
 
 /**
- * Resolves the candidate's own ESCO occupation, in priority order:
- * 1. `likelyRole` text directly, when it resolves to a real ESCO occupation
- *    — the strongest, most explicit signal.
- * 2. The query term deriveJobQuery() would search for (jobQueryService.ts)
- *    — reuses its own dominant-skill-cluster resolution (e.g. "Senior Data
- *    Analyst" for a Python/SQL/Power-BI-heavy profile) rather than
- *    duplicating that logic, so occupation resolution can never disagree
- *    with what the app actually searches job boards for.
- * Returns null when neither resolves — a genuinely unrecognized or absent
+ * Resolves the candidate's own ESCO occupation via the exact same priority
+ * chain deriveJobQuery() (jobQueryService.ts) uses to pick a job-search
+ * term — including its check that an explicit `likelyRole` doesn't flatly
+ * contradict a decisively-matched skill cluster — so occupation resolution
+ * can never disagree with what the app actually searches job boards for,
+ * and a `likelyRole` that shouldn't be trusted (e.g. hijacked by an
+ * unrelated side-project line elsewhere in the resume) can't corrupt this
+ * any more than it corrupts the job search itself.
+ *
+ * If deriveJobQuery()'s chosen term doesn't resolve to a real ESCO
+ * occupation at all (ESCO has no entry for many stated titles, e.g. "Marine
+ * Biologist"), falls back once more to a skills-only resolution before
+ * giving up — deriveJobQuery() itself never gets that second attempt,
+ * since it has no reason to reconsider a `likelyRole` that wasn't in
+ * conflict, but occupation resolution can still benefit from it. Returns
+ * null when nothing resolves — a genuinely unrecognized or absent
  * occupation is never guessed at.
  */
 export function resolveCandidateOccupation(
@@ -142,20 +149,21 @@ export function resolveCandidateOccupation(
   skills: Skill[] | undefined,
   industries: string[] | undefined
 ): ResolvedOccupation | null {
-  if (likelyRole?.trim()) {
-    const direct = resolveEscoOccupation(likelyRole);
-    if (direct) return direct;
+  const baseProfile = { skills: skills ?? [], experience: '', yearsExperience: 0, industries: industries ?? [] };
+
+  const query = deriveJobQuery({ ...baseProfile, likelyRole });
+  if (query.source !== 'seniority_fallback') {
+    const resolved = resolveEscoOccupation(query.primaryQuery);
+    if (resolved) return resolved;
   }
 
-  const query = deriveJobQuery({
-    skills: skills ?? [],
-    experience: '',
-    yearsExperience: 0,
-    industries: industries ?? [],
-    likelyRole: undefined, // already tried above; force the skill-cluster/industry path here
-  });
-  if (query.source === 'seniority_fallback') return null; // no real signal to resolve from
-  return resolveEscoOccupation(query.primaryQuery);
+  if (likelyRole?.trim() && query.source === 'likely_role') {
+    const skillOnlyQuery = deriveJobQuery({ ...baseProfile, likelyRole: undefined });
+    if (skillOnlyQuery.source === 'seniority_fallback') return null;
+    return resolveEscoOccupation(skillOnlyQuery.primaryQuery);
+  }
+
+  return null;
 }
 
 function resolveJobOccupation(jobTitle: string, jobDescription: string | undefined): ResolvedOccupation | null {

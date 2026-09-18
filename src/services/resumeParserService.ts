@@ -147,8 +147,39 @@ const NON_TITLE_LINE_WORDS = new Set([
 
 // Explicit label wins over everything — the resume is telling us directly
 // what to call this. Matches "Title:", "Role:", "Current Role:", "Job
-// Title:", "Position:", anywhere in the document.
+// Title:", "Position:", but only within a section where that label
+// actually describes the candidate's own professional identity — see
+// isSectionHeaderLine() below and its use in detectLikelyRole().
 const TITLE_LABEL_PATTERN = /^(?:current\s+)?(?:job\s+)?(?:title|role|position)\s*:\s*(.+)$/i;
+
+// Section headers where a "Title:"/"Role:"/"Position:" label genuinely
+// names the candidate's own job.
+const EXPERIENCE_SECTION_HEADERS =
+  /^(?:professional\s+|work\s+)?experience$|^employment(?:\s+history)?$|^work\s+history$|^career\s+history$/i;
+
+// Section headers where the same label describes something else entirely —
+// a side/personal project's role, not the candidate's own job — and must
+// never be trusted as their professional identity no matter how confident
+// the line itself looks (this is exactly what let a "Role: Full Stack
+// Developer" line inside a "Side Projects" section hijack a BI/finance
+// candidate's likelyRole, and from there their job search query and
+// occupation resolution, in a real, reproduced case).
+const NON_EXPERIENCE_SECTION_HEADERS =
+  /^(?:side|independent|personal|academic|open[\s-]source)\s+projects?$|^projects?$|^education$|^(?:technical\s+)?skills?$|^certifications?$|^publications?$|^awards?(?:\s+(?:&|and)\s+honou?rs?)?$|^references?$|^summary$|^objective$|^profile$|^about(?:\s+me)?$/i;
+
+// Classifies a line as a recognized section header, or null when it isn't
+// one (ordinary content). Only a handful of common headings are
+// recognized on purpose — an unrecognized heading leaves the current
+// eligibility state unchanged (see detectLikelyRole()) rather than
+// guessing, since a false "non-experience" classification would silently
+// suppress a genuine title label, and a false "experience" classification
+// would reopen exactly the hole this exists to close.
+function isSectionHeaderLine(line: string): 'experience' | 'non-experience' | null {
+  const normalized = line.trim().replace(/:$/, '');
+  if (EXPERIENCE_SECTION_HEADERS.test(normalized)) return 'experience';
+  if (NON_EXPERIENCE_SECTION_HEADERS.test(normalized)) return 'non-experience';
+  return null;
+}
 
 function looksLikeTitleLine(line: string): boolean {
   const trimmed = line.trim();
@@ -171,7 +202,19 @@ function looksLikeTitleLine(line: string): boolean {
 function detectLikelyRole(text: string): string | undefined {
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
 
+  // Section-scoped: a "Title:"/"Role:"/"Position:" label only counts while
+  // we're in a section where it actually names the candidate's own job.
+  // Starts eligible (true) — the header/contact block at the top of a
+  // resume, before any section is declared, is exactly where a real
+  // "Title: X" line normally lives. An unrecognized heading leaves the
+  // current state unchanged rather than guessing either way.
+  let eligible = true;
   for (const line of lines) {
+    const section = isSectionHeaderLine(line);
+    if (section === 'experience') eligible = true;
+    else if (section === 'non-experience') eligible = false;
+
+    if (!eligible) continue;
     const match = line.match(TITLE_LABEL_PATTERN);
     if (match) {
       const candidate = match[1].trim().replace(/[.,;]+$/, '');
