@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Raw ESCO CSV export (~80MB) — too large to commit; download and rebuild
+# locally instead. See README.md's "ESCO data setup" section.
+data/esco/
+
 # Environment variables (never commit real secrets)
 .env
 .env.local

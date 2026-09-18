@@ -1,6 +1,7 @@
 import type { ResumeProfile, Skill, JobOpportunity, CareerRecommendation } from '../types';
 import { mockRemoteJobs, mockFreelanceGigs } from './mockData';
 import { classifyOccupationCompatibility, type OccupationCompatibilityResult } from './occupationMatchingService';
+import { getEscoSkillById } from './escoTaxonomyClient';
 
 // ---------------------------------------------------------------------------
 // Scoring weights — transparent, deterministic, no random inputs.
@@ -31,6 +32,28 @@ function hasSkillByName(skills: Skill[], name: string): boolean {
   return skills.some((skill) => skill.name.toLowerCase() === name.toLowerCase());
 }
 
+// Matches by ESCO id first (the reliable key once both sides are ESCO-
+// sourced), falling back to name equality for a skill that predates ESCO
+// extraction (mockData.ts's own mock jobs/gigs) — so neither source
+// silently stops matching the other.
+function hasMatchingSkill(skills: Skill[], target: Skill): boolean {
+  if (target.escoId) {
+    if (skills.some((skill) => skill.escoId === target.escoId)) return true;
+  }
+  return hasSkillByName(skills, target.name);
+}
+
+// A job with zero real overlap in its ACTUAL requirements must never read
+// as a viable match, regardless of what the raw weighted formula or the
+// occupation-family multiplier alone would have produced — this is the
+// explicit trust-integrity rule the ESCO migration was built to guarantee:
+// same failure shape as the original Power BI/SAP bug (a job the candidate
+// shares nothing real with still scoring competitively), now closed at the
+// scoring layer itself rather than relying solely on occupation gating to
+// catch it. Deliberately below matchFitBand.ts's Stretch/Worth Exploring
+// boundary (55).
+const ZERO_ESSENTIAL_OVERLAP_CAP = 20;
+
 function sharedSkillCount(a: Skill[], b: Skill[]): number {
   const bNames = new Set(b.map((skill) => skill.name.toLowerCase()));
   return a.filter((skill) => bNames.has(skill.name.toLowerCase())).length;
@@ -58,7 +81,7 @@ export function splitSkillsByTransferability(skills: Skill[]): { coreSkills: Ski
   };
 }
 
-interface JobScore {
+export interface JobScore {
   matchScore: number;
   skillMatchPercent: number;
   experienceScore: number;
@@ -68,6 +91,12 @@ interface JobScore {
   matchedSkills: Skill[];
   missingSkills: Skill[];
   matchedBusinessSkills: Skill[];
+  // True whenever the effective requirement list (the matched occupation's
+  // essential skills, or job.requiredSkills as a fallback when no
+  // occupation resolved) is non-empty AND at least one of those skills was
+  // actually matched. Used by rankJobs() below to guarantee a zero-overlap
+  // job can never rank above one with genuine overlap, regardless of score.
+  hasEssentialOverlap: boolean;
   // Exposed for callers that want the reasoning behind a score adjustment
   // (e.g. future explanation work) — never read by buildReasons()/
   // buildRecommendedAction() below today, so it changes no existing
@@ -75,10 +104,46 @@ interface JobScore {
   occupationCompatibility: OccupationCompatibilityResult;
 }
 
-function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
-  const matchedSkills = job.requiredSkills.filter((skill) => hasSkillByName(profile.skills, skill.name));
-  const missingSkills = job.requiredSkills.filter((skill) => !hasSkillByName(profile.skills, skill.name));
-  const skillMatchPercent = job.requiredSkills.length > 0 ? (matchedSkills.length / job.requiredSkills.length) * 100 : 0;
+// The occupation-resolved essential skills ARE the requirement list once an
+// occupation is known — job.requiredSkills (free-text extraction from the
+// listing's own title/description) is only ever a fallback for a job whose
+// occupation couldn't be resolved (see occupationMatchingService.ts's
+// honesty guarantee: ESCO doesn't have every real-world title, e.g. no
+// dedicated "SAP consultant" occupation). Skill gaps must come only from
+// this list — never from free-text keywords — per the ESCO migration's
+// explicit requirement.
+function effectiveRequiredSkills(job: JobOpportunity, compatibility: OccupationCompatibilityResult): Skill[] {
+  const essentialIds = compatibility.jobOccupation?.essentialSkillIds;
+  if (essentialIds && essentialIds.length > 0) {
+    const skills = essentialIds.map((id) => getEscoSkillById(id)).filter((s): s is Skill => Boolean(s));
+    if (skills.length > 0) return skills;
+  }
+  return job.requiredSkills;
+}
+
+// Exported so matchingService.ts's matchFreelanceForUser() can score
+// freelance gigs through this EXACT same formula/gate — see its own comment
+// for why gigs are wrapped into a JobOpportunity shape rather than
+// recommendationService.ts gaining a second, parallel formula. Every other
+// caller still goes through rankJobsForUser()/getCareerRecommendations()
+// below, which remain the single source of truth for job ranking.
+export function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
+  // Occupation/role-family compatibility is resolved FIRST — scoring below
+  // needs its jobOccupation (for the essential-skills requirement list),
+  // not just its multiplier/cap.
+  const occupationCompatibility = classifyOccupationCompatibility(
+    profile.likelyRole,
+    profile.industries,
+    job.title,
+    job.description,
+    profile.skills
+  );
+
+  const requiredSkills = effectiveRequiredSkills(job, occupationCompatibility);
+  const matchedSkills = requiredSkills.filter((skill) => hasMatchingSkill(profile.skills, skill));
+  const missingSkills = requiredSkills.filter((skill) => !hasMatchingSkill(profile.skills, skill));
+  const skillMatchPercent = requiredSkills.length > 0 ? (matchedSkills.length / requiredSkills.length) * 100 : 0;
+  const hasEssentialOverlap = requiredSkills.length === 0 || matchedSkills.length > 0;
 
   const [idealMin, idealMax] = seniorityRangeForTitle(job.title);
   let experienceScore: number;
@@ -101,8 +166,8 @@ function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
     industryScore = 20;
   }
 
-  const businessRequired = job.requiredSkills.filter((skill) => skill.category === 'business');
-  const matchedBusinessSkills = businessRequired.filter((skill) => hasSkillByName(profile.skills, skill.name));
+  const businessRequired = requiredSkills.filter((skill) => skill.category === 'business');
+  const matchedBusinessSkills = businessRequired.filter((skill) => hasMatchingSkill(profile.skills, skill));
   const transferableScore =
     businessRequired.length === 0 ? 50 : (matchedBusinessSkills.length / businessRequired.length) * 100;
 
@@ -115,24 +180,29 @@ function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
       transferableScore * WEIGHT_TRANSFERABLE
   );
 
-  // Occupation/domain compatibility is a GATE applied to the score above,
+  // Occupation/family compatibility is a GATE applied to the score above,
   // not a 5th additive weight — an additive term could still let raw
   // skill overlap dominate (e.g. a Marine Biologist matching Python/SQL
   // against a Data Analyst posting), which is exactly the failure this
-  // closes. same_domain and unknown apply no adjustment at all — a
-  // candidate whose occupation can't be determined is never penalized,
-  // and the existing skill-based score keeps working exactly as before.
-  const occupationCompatibility = classifyOccupationCompatibility(
-    profile.likelyRole,
-    profile.industries,
-    job.title,
-    job.description,
-    profile.skills
-  );
+  // closes. same_domain and candidate-unresolved unknown apply no
+  // adjustment at all — a candidate whose occupation can't be determined
+  // is never penalized, and the existing skill-based score keeps working
+  // exactly as before.
   let matchScore = Math.round(rawScore * occupationCompatibility.multiplier);
   if (occupationCompatibility.cap !== undefined) {
     matchScore = Math.min(matchScore, occupationCompatibility.cap);
   }
+
+  // Trust-integrity floor: zero overlap in the ACTUAL requirement list
+  // (essential skills when an occupation resolved, job.requiredSkills
+  // otherwise) must never read as Stretch-or-better, regardless of what the
+  // weighted formula or occupation multiplier alone produced — this is what
+  // makes the "zero real overlap" failure shape structurally impossible,
+  // not just statistically unlikely.
+  if (!hasEssentialOverlap) {
+    matchScore = Math.min(matchScore, ZERO_ESSENTIAL_OVERLAP_CAP);
+  }
+
   matchScore = Math.max(0, Math.min(100, matchScore));
 
   return {
@@ -145,6 +215,7 @@ function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore {
     matchedSkills,
     missingSkills,
     matchedBusinessSkills,
+    hasEssentialOverlap,
     occupationCompatibility,
   };
 }
@@ -219,7 +290,16 @@ export interface CareerRecommendationOptions {
 function rankJobs(profile: ResumeProfile, jobs: JobOpportunity[]): { job: JobOpportunity; score: JobScore }[] {
   return jobs
     .map((job) => ({ job, score: scoreJob(profile, job) }))
-    .sort((a, b) => b.score.matchScore - a.score.matchScore);
+    .sort((a, b) => {
+      // A job with zero overlap in its actual requirements can never
+      // outrank one with genuine overlap, regardless of raw score — the
+      // "never the top match" guarantee, enforced structurally here rather
+      // than relying on the score gap alone.
+      if (a.score.hasEssentialOverlap !== b.score.hasEssentialOverlap) {
+        return a.score.hasEssentialOverlap ? -1 : 1;
+      }
+      return b.score.matchScore - a.score.matchScore;
+    });
 }
 
 // The same scoreJob() ranking getCareerRecommendations() below builds its
@@ -235,6 +315,16 @@ export function rankJobsForUser(profile: ResumeProfile, jobs: JobOpportunity[]):
     ...job,
     matchScore: score.matchScore,
     occupationCategory: score.occupationCompatibility.category,
+    // Overwritten with the EFFECTIVE requirement list scoreJob() actually
+    // scored against (the matched occupation's essential skills, when
+    // resolved — see effectiveRequiredSkills()) — never left as the job's
+    // original free-text requiredSkills, which a downstream caller (e.g.
+    // matchingService.ts's generateCareerPaths -> calculateSkillGaps) would
+    // otherwise recompute gaps against, silently disagreeing with what was
+    // actually scored.
+    requiredSkills: [...score.matchedSkills, ...score.missingSkills],
+    matchedSkills: score.matchedSkills,
+    missingSkills: score.missingSkills,
   }));
 }
 

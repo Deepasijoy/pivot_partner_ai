@@ -1,51 +1,47 @@
-// Occupation/domain compatibility — a small, deterministic gate applied
-// before recommendationService.ts's existing skill/experience score, so a
-// candidate's raw skill overlap can no longer make a clearly unrelated job
-// (e.g. a Marine Biologist matching a Data Analyst posting purely on
-// Python/SQL) rank as if it were a genuinely good fit.
+// Occupation/role-family compatibility — a small, deterministic gate
+// applied before recommendationService.ts's existing skill/experience
+// score, so a candidate's raw skill overlap can no longer make a clearly
+// unrelated job (e.g. a Marine Biologist matching a Data Analyst posting
+// purely on Python/SQL) rank as if it were a genuinely good fit.
 //
-// Design intent, per the audit: this is a GATE/multiplier applied to the
-// existing score, not a 5th additive weight (an additive term could still
-// let raw skill overlap dominate) — see recommendationService.ts's
-// scoreJob() for the integration point. It classifies into three tiers
-// (plus an honest "unknown" when there isn't enough signal to say
-// anything):
-//   - same_domain: candidate's occupation and the job's occupation are the
-//     same domain family — no adjustment, existing score stands.
-//   - adjacent:    a plausible, well-understood career transition (e.g.
-//     Journalist -> Content Strategist) or a job whose own text bridges
-//     into the candidate's domain (e.g. "Environmental Data Analyst" for a
-//     Marine Biologist) — a moderate discount, not a rejection.
-//   - unrelated:   no domain relationship found at all — a sharp discount
-//     plus a hard cap, so even a very high raw skill-overlap score can't
-//     slip through as misleadingly "good."
-//   - unknown:     the candidate's occupation (or, separately, the job's)
-//     couldn't be determined from the available structured evidence. When
-//     the CANDIDATE's domain is unresolvable, this is a true no-adjustment
-//     pass-through (multiplier 1) — we have nothing at all to judge them
-//     by, so the existing skill-based score is trusted as-is, exactly as
-//     it already was before this module existed. When the candidate's
-//     domain IS known but the JOB's couldn't be resolved even after the
-//     hint-word bridging check below, this gets a real (but uncapped, and
-//     less severe than 'unrelated') discount instead — see
-//     WEAK_EVIDENCE_MULTIPLIER. That asymmetry is deliberate: an
-//     unclassifiable candidate is never penalized for our keyword list's
-//     gaps, but an unclassifiable JOB must not silently earn the same
-//     confidence as a confirmed same-domain match either (that was the
-//     concrete failure mode: informal titles like "Sales Jedi" or "Head of
-//     People" landing in 'unknown' and outranking properly-gated jobs).
+// Replaces the previous hand-curated DOMAIN_FAMILIES keyword system with
+// ESCO/ISCO-based classification: the candidate's stated role and the
+// job's title/description are each resolved to a real ESCO occupation
+// (escoTaxonomyClient.ts), and role-family relation is read directly off
+// their ISCO-08 group codes — same 3-digit minor group (e.g. 2511/2512,
+// both "software and applications developers and analysts") counts as the
+// SAME family; same 2-digit sub-major group, or one of the small curated
+// cross-sub-major bridges below, counts as ADJACENT; anything else is
+// UNRELATED. This replaces ~20 hand-picked keyword lists with a real
+// occupational taxonomy of ~2,330 occupations, closing the exact class of
+// gap that produced the confirmed root-cause bug: a Power BI/SQL/finance
+// resume's top match was "Senior SAP AMS Consultant (SAP EWM)" purely
+// because the OLD keyword taxonomy had no ERP/SAP-consulting concept at
+// all to classify that job against.
 //
-// Deliberately NOT a database of thousands of occupations: a small set of
-// broad domain families, each defined by a short keyword list, plus a
-// short table of explicitly curated adjacent-domain pairs for well-known
-// transitions that don't share vocabulary (Journalist/Content Strategist
-// shares no words at all). Extending this later (new families, new
-// adjacency pairs, or swapping the keyword-match step for an embeddings-
-// based similarity score) only touches this one file — recommendationService.ts
-// only ever sees the typed OccupationCompatibilityResult below.
+// Categories (unchanged in spirit from the previous system):
+//   - same_family: candidate's occupation and the job's occupation share an
+//     ISCO minor group — no adjustment, existing score stands.
+//   - adjacent:    a genuine, ISCO-adjacent role family — a moderate
+//     discount, not a rejection.
+//   - unrelated:   confirmed different family — a sharp discount plus a
+//     hard cap, so even a very high raw skill-overlap score can't slip
+//     through as misleadingly "good."
+//   - unknown:     either side's occupation couldn't be resolved from ESCO
+//     at all (see resolveEscoOccupation's own honesty guarantee — ESCO has
+//     real coverage gaps too, e.g. no dedicated "SAP consultant" occupation
+//     exists even in the full, untrimmed ESCO taxonomy). An unresolved
+//     CANDIDATE is a true no-adjustment pass-through (multiplier 1) — we
+//     have nothing to judge them by. An unresolved JOB gets a real (but
+//     uncapped) discount instead — see WEAK_EVIDENCE_MULTIPLIER — the same
+//     asymmetry the old system used, for the same reason: an unclassifiable
+//     candidate is never penalized for a taxonomy gap, but an
+//     unclassifiable job must not silently earn the same confidence as a
+//     confirmed same-family match.
 
 import type { Skill } from '../types';
-import { findDominantSkillClusters } from './jobQueryService';
+import { resolveEscoOccupation, type ResolvedOccupation } from './escoTaxonomyClient';
+import { deriveJobQuery } from './jobQueryService';
 
 export type OccupationCompatibilityCategory = 'same_domain' | 'adjacent' | 'unrelated' | 'unknown';
 
@@ -53,353 +49,129 @@ export interface OccupationCompatibilityResult {
   category: OccupationCompatibilityCategory;
   // Applied multiplicatively to the existing skill/experience/industry/
   // transferable score in recommendationService.ts — never an additive
-  // term. 1 for same_domain and unknown (no adjustment either way).
+  // term. 1 for same_domain and candidate-unresolved unknown.
   multiplier: number;
   // Present only for 'unrelated' — an absolute ceiling applied after the
   // multiplier, so a very high raw score still can't read as "good."
   cap?: number;
-  // Short, machine-readable tag for internal use/debugging/future
-  // explanation work — never shown to the user directly as-is.
   reason:
-    | 'same_domain'
-    | 'adjacent_domain_pair'
-    | 'related_domain_terms_present'
-    | 'different_domain'
-    | 'candidate_domain_unknown'
-    | 'job_domain_unknown';
+    | 'same_family'
+    | 'adjacent_isco_group'
+    | 'different_family'
+    | 'candidate_occupation_unresolved'
+    | 'job_occupation_unresolved';
+  // The resolved ESCO occupation on each side, when available — exposed so
+  // recommendationService.ts can source skill gaps from the JOB occupation's
+  // own essential skills (never from free-text keywords) without having to
+  // re-resolve it a second time.
+  candidateOccupation: ResolvedOccupation | null;
+  jobOccupation: ResolvedOccupation | null;
 }
 
-const SAME_DOMAIN_MULTIPLIER = 1;
+const SAME_FAMILY_MULTIPLIER = 1;
 const ADJACENT_MULTIPLIER = 0.85;
 const UNRELATED_MULTIPLIER = 0.25;
 const UNRELATED_CAP = 30;
-// Applied only when the CANDIDATE's domain is confidently known but the
-// JOB's title/description matched no recognized family AND showed none of
-// the candidate's own domain's hint words either (see the bridging check in
-// classifyOccupationCompatibility) — genuine missing evidence, not a
-// confirmed mismatch. Per the design principle: insufficient evidence must
-// not carry the same confidence as a same_domain match (1x), but it also
-// isn't a confirmed 'unrelated' job, so it gets no hard cap — a real
-// discount, deliberately less severe than 'unrelated's.
+// Same role as the old system's WEAK_EVIDENCE_MULTIPLIER — applied only
+// when the CANDIDATE resolved but the JOB's title/description matched no
+// ESCO occupation at all. Genuine missing evidence, not a confirmed
+// mismatch, so it gets a real discount but no hard cap.
 const WEAK_EVIDENCE_MULTIPLIER = 0.6;
 
-interface DomainFamily {
-  id: string;
-  // Specific phrases that identify a ROLE or JOB as primarily this domain
-  // (e.g. "marine biologist", "data analyst") — used for same-domain
-  // matching. Kept reasonably specific to avoid over-triggering.
-  titleKeywords: string[];
-  // Broader, shorter words associated with this domain (e.g. "marine",
-  // "environmental") — used only for the bridging check below, so a
-  // compound/hybrid job title like "Environmental Data Analyst" can be
-  // recognized as adjacent to a Marine Biologist even though its primary
-  // domain (data analytics) is different.
-  hintWords: string[];
-}
-
-const DOMAIN_FAMILIES: DomainFamily[] = [
-  {
-    id: 'software_engineering',
-    titleKeywords: ['software engineer', 'software developer', 'programmer', 'full stack developer', 'backend developer', 'frontend developer', 'web developer', 'application developer'],
-    hintWords: ['software', 'programming', 'codebase', 'engineering team'],
-  },
-  {
-    id: 'data_analytics',
-    titleKeywords: ['data analyst', 'data scientist', 'data engineer', 'business intelligence analyst', 'bi analyst'],
-    hintWords: ['data analysis', 'analytics', 'dataset', 'dashboard'],
-  },
-  {
-    id: 'cloud_devops',
-    titleKeywords: ['devops engineer', 'site reliability engineer', 'cloud engineer', 'infrastructure engineer', 'platform engineer'],
-    hintWords: ['devops', 'cloud infrastructure', 'deployment pipeline'],
-  },
-  {
-    id: 'design_ux',
-    titleKeywords: ['ux designer', 'ui designer', 'product designer', 'user experience designer', 'user interface designer'],
-    hintWords: ['user experience', 'user interface', 'design system'],
-  },
-  {
-    id: 'finance',
-    titleKeywords: ['financial analyst', 'finance manager', 'banker', 'accountant', 'investment analyst', 'auditor', 'financial operations analyst'],
-    hintWords: ['finance', 'financial', 'banking', 'accounting'],
-  },
-  {
-    id: 'business_operations',
-    titleKeywords: ['operations manager', 'business analyst', 'operations analyst', 'supply chain analyst'],
-    hintWords: ['operations', 'process improvement', 'business process'],
-  },
-  {
-    id: 'sales_marketing',
-    titleKeywords: ['sales manager', 'marketing manager', 'business development manager', 'account executive', 'growth marketer', 'social media manager', 'digital marketing manager', 'advertising manager', 'brand manager', 'social media specialist', 'community manager'],
-    hintWords: ['sales', 'marketing campaign', 'business development', 'social media', 'advertising', 'digital marketing', 'brand'],
-  },
-  {
-    id: 'content_strategy',
-    titleKeywords: ['content strategist', 'content marketing manager', 'content writer', 'copywriter'],
-    hintWords: ['content strategy', 'editorial calendar', 'content marketing'],
-  },
-  {
-    id: 'journalism_media',
-    titleKeywords: ['journalist', 'reporter', 'news writer', 'correspondent', 'news editor'],
-    hintWords: ['journalism', 'newsroom', 'editorial', 'reporting'],
-  },
-  {
-    id: 'people_hr',
-    titleKeywords: ['hr manager', 'human resources manager', 'recruiter', 'talent acquisition specialist', 'people operations manager'],
-    hintWords: ['human resources', 'recruitment', 'talent acquisition'],
-  },
-  {
-    id: 'customer_success',
-    titleKeywords: ['customer success manager', 'account manager', 'client relationship manager'],
-    hintWords: ['customer success', 'client relationship'],
-  },
-  {
-    id: 'education',
-    titleKeywords: ['teacher', 'instructor', 'educator', 'education coordinator', 'professor', 'tutor', 'academic coordinator'],
-    hintWords: ['classroom', 'curriculum', 'pedagogy', 'academic'],
-  },
-  {
-    id: 'learning_development',
-    titleKeywords: ['learning and development specialist', 'learning & development specialist', 'instructional designer', 'training manager', 'corporate trainer'],
-    hintWords: ['learning and development', 'instructional design', 'corporate training'],
-  },
-  {
-    id: 'marine_environmental_science',
-    titleKeywords: ['marine biologist', 'marine biology', 'marine scientist', 'marine science', 'oceanographer', 'oceanography', 'environmental scientist', 'environmental science', 'ecologist', 'ecology'],
-    hintWords: ['marine', 'ocean', 'environmental', 'environment', 'ecological', 'conservation', 'wildlife', 'sustainability', 'climate'],
-  },
-  {
-    id: 'life_sciences',
-    titleKeywords: ['biologist', 'biology', 'laboratory technician', 'lab technician', 'research scientist', 'biotech researcher'],
-    hintWords: ['laboratory', 'biology', 'biological', 'research study'],
-  },
-  {
-    id: 'healthcare_nursing',
-    titleKeywords: ['registered nurse', 'nurse practitioner', 'clinical nurse', 'nursing', 'physician', 'medical doctor', 'general practitioner', 'surgeon', 'medical officer', 'family doctor'],
-    hintWords: ['clinical', 'patient care', 'healthcare'],
-  },
-  {
-    id: 'mechanical_engineering',
-    titleKeywords: ['mechanical engineer', 'mechanical engineering'],
-    hintWords: ['mechanical design', 'cad'],
-  },
-  {
-    id: 'civil_electrical_engineering',
-    titleKeywords: ['civil engineer', 'structural engineer', 'electrical engineer', 'site engineer', 'construction engineer'],
-    hintWords: ['civil engineering', 'electrical engineering', 'structural design', 'construction site'],
-  },
-  {
-    // Deliberately does NOT include bare "architect" — that word alone is
-    // heavily overloaded by tech titles (Software Architect, Solutions
-    // Architect, Cloud Architect, Enterprise Architect, Data Architect),
-    // and a confirmed test case (an informal "AI Engineer / Architect"
-    // title) showed bare "architect" wrongly resolving a software title
-    // into the building-architecture domain, turning an 'unknown' result
-    // into a false 'unrelated'. Only qualified building/urban-design
-    // phrasings are used here; a plain "Architect" title on a real
-    // architecture resume still falls through to the hint-word bridging
-    // check against the job description, or to 'unknown' — a safer
-    // default than a false domain assignment.
-    id: 'architecture',
-    titleKeywords: ['architectural designer', 'urban planner', 'landscape architect', 'interior architect', 'building architect', 'licensed architect', 'registered architect'],
-    hintWords: ['architecture', 'blueprint', 'building design', 'construction design'],
-  },
-  {
-    id: 'legal',
-    titleKeywords: ['lawyer', 'attorney', 'legal counsel', 'solicitor', 'paralegal', 'corporate counsel', 'legal advisor'],
-    hintWords: ['legal', 'litigation', 'contract', 'law firm'],
-  },
-  {
-    id: 'academic_research',
-    titleKeywords: ['postdoctoral researcher', 'research fellow', 'principal investigator', 'academic researcher', 'phd researcher', 'research associate'],
-    hintWords: ['research', 'academia', 'peer-reviewed', 'publication', 'grant-funded'],
-  },
+// Curated cross-boundary ISCO bridges for specific, confirmed-real adjacent
+// role-family pairs — the direct ISCO equivalent of the old system's
+// ADJACENT_DOMAIN_PAIRS, just keyed on ISCO codes instead of hand-named
+// domains. Deliberately kept at MINOR-GROUP (3-digit) granularity, not a
+// blanket 2-digit sub-major bridge: an earlier version of this table used
+// ['25','24'] (all of "ICT professionals" <-> all of "Business & admin
+// professionals") to bridge "data analyst" (2511) with "business analyst"/
+// "business intelligence manager" (2421) — genuinely adjacent — but that
+// same blanket rule also silently made "Financial Analyst" (2413) adjacent
+// to "Web Developer" (2513), which are not, since both pairs happen to
+// cross the same 25/24 boundary. Confirmed via test regression — a Banker
+// candidate was wrongly scored 'adjacent' against an unrelated Web
+// Developer gig. Narrowing to the specific minor-group pair that's actually
+// justified (251 "software/applications developers and analysts" <-> 242
+// "administration professionals", which is what "data analyst" and
+// "business analyst"/"business intelligence manager" both fall under)
+// fixes that collision without losing the case this bridge exists for.
+const ADJACENT_MINOR_GROUP_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['251', '242'], // Software/applications developers & analysts <-> Administration professionals (data analyst <-> business analyst / BI manager)
 ];
 
-// Curated, generally-agreed adjacent transitions that don't necessarily
-// share vocabulary (unlike the bridging check below, which relies on the
-// job's own text). Deliberately small and symmetric — order within a pair
-// doesn't matter.
-const ADJACENT_DOMAIN_PAIRS: ReadonlyArray<readonly [string, string]> = [
-  ['journalism_media', 'content_strategy'],
-  ['education', 'learning_development'],
-  ['marine_environmental_science', 'life_sciences'],
-  ['data_analytics', 'business_operations'],
-  ['finance', 'business_operations'],
-  ['software_engineering', 'cloud_devops'],
-  ['architecture', 'civil_electrical_engineering'],
-  ['architecture', 'mechanical_engineering'],
-  ['legal', 'business_operations'],
-  ['academic_research', 'education'],
-  ['academic_research', 'life_sciences'],
-  // sales_marketing had zero adjacency since the domain was first
-  // introduced (predates the taxonomy-expansion commit that broadened its
-  // own titleKeywords/hintWords) — confirmed missing-adjacency gap, not
-  // intentional: content_strategy already lists "content marketing
-  // manager" as one of its OWN titleKeywords (direct vocabulary overlap
-  // with sales_marketing), and marketing operations / growth / account
-  // management are common, well-understood real transitions to/from
-  // business_operations and customer_success.
-  ['sales_marketing', 'content_strategy'],
-  ['sales_marketing', 'business_operations'],
-  ['sales_marketing', 'customer_success'],
-];
-
-// Conservative, deliberately non-exhaustive — an industry the resume
-// parser already detected (resumeParserService.ts's INDUSTRY_KEYWORDS) is
-// only mapped here when the industry label is itself close to synonymous
-// with a specific occupation domain. Ambiguous industries (SaaS,
-// E-commerce, Retail, Logistics, Consulting, General Business) are
-// deliberately left unmapped — they say too little about the candidate's
-// actual occupation to gate on, so they fall through to 'unknown' instead.
-const INDUSTRY_TO_DOMAIN: Record<string, string> = {
-  'Marine Science': 'marine_environmental_science',
-  'Environmental Science': 'marine_environmental_science',
-  'Life Sciences': 'life_sciences',
-  'Journalism & Media': 'journalism_media',
-  Education: 'education',
-  Finance: 'finance',
-  Fintech: 'finance',
-  Healthcare: 'healthcare_nursing',
-  Operations: 'business_operations',
-  Marketing: 'sales_marketing',
-};
-
-function normalize(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+function subMajorGroup(iscoGroup: string): string {
+  return iscoGroup.slice(0, 2);
+}
+function minorGroup(iscoGroup: string): string {
+  return iscoGroup.slice(0, 3);
 }
 
-// Word-bounded phrase match: normalize() reduces everything to lowercase
-// alphanumerics separated by single spaces, so a boundary is simply the
-// string's own edge or an adjacent space — this is the same approach
-// geoMatch.ts uses for destination text, reimplemented locally here rather
-// than imported, since occupation matching and geographic matching are
-// unrelated concerns that happen to want the same small primitive.
-function containsPhrase(haystack: string, phrase: string): boolean {
-  const normalizedPhrase = normalize(phrase);
-  if (!normalizedPhrase) return false;
-  const pattern = new RegExp(`(?:^|\\s)${normalizedPhrase}(?:\\s|$)`);
-  return pattern.test(haystack);
-}
-
-function findFamily(domainId: string): DomainFamily | undefined {
-  return DOMAIN_FAMILIES.find((family) => family.id === domainId);
-}
-
-function domainsMatchingText(normalizedText: string): Set<string> {
-  const matched = new Set<string>();
-  for (const family of DOMAIN_FAMILIES) {
-    if (family.titleKeywords.some((keyword) => containsPhrase(normalizedText, keyword))) {
-      matched.add(family.id);
-    }
+// Same 2-digit ISCO sub-major group (e.g. both under 23 "Teaching
+// professionals") is treated as adjacent WITHOUT needing a curated pair —
+// unlike the cross-sub-major case above, staying within one sub-major is a
+// low-risk generalization (confirmed via "secondary school teacher" (2330)
+// <-> "instructional designer" (2359), a genuine transition ISCO itself
+// already groups together) — the risky case was specifically bridging
+// ACROSS two different sub-majors, which is why that part is curated and
+// narrow instead.
+function familyRelation(iscoA: string, iscoB: string): 'same' | 'adjacent' | 'unrelated' {
+  const minorA = minorGroup(iscoA);
+  const minorB = minorGroup(iscoB);
+  if (minorA === minorB) return 'same';
+  if (subMajorGroup(iscoA) === subMajorGroup(iscoB)) return 'adjacent';
+  if (ADJACENT_MINOR_GROUP_PAIRS.some(([x, y]) => (x === minorA && y === minorB) || (x === minorB && y === minorA))) {
+    return 'adjacent';
   }
-  return matched;
-}
-
-// A skill-cluster match only overrides an industry-derived domain when it's
-// genuinely unambiguous: a single top cluster (no tie) with at least this
-// many matching skills. Confirmed bug this guards against: a candidate with
-// 7 strong Data/BI/Finance skills and 2 incidental "...Marketing" skills
-// (Growth Marketing, Content Marketing) had their whole profile resolved to
-// 'sales_marketing' — detectIndustries()'s REINFORCEMENT_REQUIRED bar
-// (>=2 mentions) was barely satisfied by those 2 secondary skills alone,
-// even though deriveJobQuery() already correctly identified 'data_analytics'
-// as the dominant cluster (3 matches: Python/SQL/Power BI) for the exact
-// same profile. 2 is deliberately the same floor deriveJobQuery() itself
-// treats as meaningful evidence (its own tie-breaking only ever runs once
-// bestCount > 0, but a single matching skill is too thin a signal to
-// override an industry keyword hit on its own).
-const MIN_SKILL_CLUSTER_MAJORITY = 2;
-
-function resolveDomainFromLikelyRole(likelyRole: string | undefined): string | null {
-  if (!likelyRole?.trim()) return null;
-  const normalizedRole = normalize(likelyRole);
-  const matched = domainsMatchingText(normalizedRole);
-  if (matched.size === 0) return null;
-  // A role can only be classified into one primary domain — first match in
-  // DOMAIN_FAMILIES definition order wins, deterministic.
-  return DOMAIN_FAMILIES.find((family) => matched.has(family.id))?.id ?? null;
-}
-
-function resolveDomainFromIndustries(industries: string[] | undefined): string | null {
-  for (const industry of industries ?? []) {
-    const domainId = INDUSTRY_TO_DOMAIN[industry];
-    if (domainId) return domainId;
-  }
-  return null;
+  return 'unrelated';
 }
 
 /**
- * Resolves the candidate's own occupation domain, in priority order:
- * 1. `likelyRole`, when it maps directly to a known domain family — the
- *    strongest, most explicit signal (exactly as resumeParserService.ts
- *    extracted it, never re-interpreted).
- * 2. A clear, unambiguous skill-cluster majority (see
- *    MIN_SKILL_CLUSTER_MAJORITY above) — the same dominant-cluster
- *    computation deriveJobQuery() already does for query construction
- *    (findDominantSkillClusters, jobQueryService.ts), reused here rather
- *    than duplicated. Deliberately checked BEFORE the industry fallback:
- *    an industry label is a much weaker, more incidental signal (it only
- *    takes a couple of matching keyword mentions to qualify — see
- *    industryDetectionService.ts's REINFORCEMENT_REQUIRED) than a genuine
- *    majority of the candidate's actual listed skills pointing to one
- *    occupation. detectIndustries()/REINFORCEMENT_REQUIRED itself is
- *    unchanged — this only changes which signal wins when they conflict.
- * 3. A resolved industry (INDUSTRY_TO_DOMAIN) — the existing fallback,
- *    still used whenever skill evidence is genuinely ambiguous (no
- *    skills given, no cluster matched at all, or a tie between clusters).
- * Returns null when none of the three signals resolve to a recognized
- * domain family — a genuinely unrecognized or absent occupation is never
- * guessed at.
+ * Resolves the candidate's own ESCO occupation, in priority order:
+ * 1. `likelyRole` text directly, when it resolves to a real ESCO occupation
+ *    — the strongest, most explicit signal.
+ * 2. The query term deriveJobQuery() would search for (jobQueryService.ts)
+ *    — reuses its own dominant-skill-cluster resolution (e.g. "Senior Data
+ *    Analyst" for a Python/SQL/Power-BI-heavy profile) rather than
+ *    duplicating that logic, so occupation resolution can never disagree
+ *    with what the app actually searches job boards for.
+ * Returns null when neither resolves — a genuinely unrecognized or absent
+ * occupation is never guessed at.
  */
-export function resolveCandidateDomain(
+export function resolveCandidateOccupation(
   likelyRole: string | undefined,
-  industries: string[] | undefined,
-  skills?: Skill[]
-): string | null {
-  const roleDomainId = resolveDomainFromLikelyRole(likelyRole);
-  if (roleDomainId) return roleDomainId;
-
-  const skillClusterMatch = findDominantSkillClusters(skills ?? []);
-  const hasClearSkillClusterMajority =
-    skillClusterMatch.clusters.length === 1 && skillClusterMatch.matchCount >= MIN_SKILL_CLUSTER_MAJORITY;
-  if (hasClearSkillClusterMajority) {
-    return skillClusterMatch.clusters[0].id;
+  skills: Skill[] | undefined,
+  industries: string[] | undefined
+): ResolvedOccupation | null {
+  if (likelyRole?.trim()) {
+    const direct = resolveEscoOccupation(likelyRole);
+    if (direct) return direct;
   }
 
-  return resolveDomainFromIndustries(industries);
+  const query = deriveJobQuery({
+    skills: skills ?? [],
+    experience: '',
+    yearsExperience: 0,
+    industries: industries ?? [],
+    likelyRole: undefined, // already tried above; force the skill-cluster/industry path here
+  });
+  if (query.source === 'seniority_fallback') return null; // no real signal to resolve from
+  return resolveEscoOccupation(query.primaryQuery);
 }
 
-function resolveJobDomains(jobTitle: string, jobDescription: string): Set<string> {
-  const normalizedTitle = normalize(jobTitle);
-  const fromTitle = domainsMatchingText(normalizedTitle);
-  if (fromTitle.size > 0) return fromTitle;
-
-  // Title alone was too generic ("Analyst", "Specialist", ...) — fall
-  // back to the description, the same "more than just the first few words
-  // of the title" evidence the task asks for.
-  const normalizedDescription = normalize(jobDescription);
-  return domainsMatchingText(normalizedDescription);
-}
-
-function areStaticallyAdjacent(domainA: string, domainB: string): boolean {
-  return ADJACENT_DOMAIN_PAIRS.some(
-    ([a, b]) => (a === domainA && b === domainB) || (a === domainB && b === domainA)
-  );
+function resolveJobOccupation(jobTitle: string, jobDescription: string | undefined): ResolvedOccupation | null {
+  return resolveEscoOccupation(jobTitle) ?? (jobDescription ? resolveEscoOccupation(jobDescription) : null);
 }
 
 /**
  * The main entry point — see the module comment above for the full
  * category/multiplier design. Never throws; always returns a usable
- * result, including when the candidate's role/industries and/or the job's
- * title/description give no usable signal at all ('unknown', no
- * adjustment).
+ * result, including when neither side resolves to a known ESCO occupation
+ * at all ('unknown', no adjustment).
+ *
+ * Signature intentionally unchanged from the previous keyword-based
+ * implementation (same 5 positional args, same order) so
+ * recommendationService.ts's and matchingService.ts's call sites needed no
+ * changes beyond this file.
  */
 export function classifyOccupationCompatibility(
   candidateLikelyRole: string | undefined,
@@ -408,48 +180,42 @@ export function classifyOccupationCompatibility(
   jobDescription: string | undefined,
   candidateSkills?: Skill[]
 ): OccupationCompatibilityResult {
-  const candidateDomainId = resolveCandidateDomain(candidateLikelyRole, candidateIndustries, candidateSkills);
-  if (!candidateDomainId) {
-    return { category: 'unknown', multiplier: 1, reason: 'candidate_domain_unknown' };
+  const candidateOccupation = resolveCandidateOccupation(candidateLikelyRole, candidateSkills, candidateIndustries);
+  if (!candidateOccupation) {
+    return {
+      category: 'unknown',
+      multiplier: 1,
+      reason: 'candidate_occupation_unresolved',
+      candidateOccupation: null,
+      jobOccupation: null,
+    };
   }
 
-  const jobDomains = resolveJobDomains(jobTitle, jobDescription ?? '');
-
-  if (jobDomains.has(candidateDomainId)) {
-    return { category: 'same_domain', multiplier: SAME_DOMAIN_MULTIPLIER, reason: 'same_domain' };
+  const jobOccupation = resolveJobOccupation(jobTitle, jobDescription);
+  if (!jobOccupation) {
+    return {
+      category: 'unknown',
+      multiplier: WEAK_EVIDENCE_MULTIPLIER,
+      reason: 'job_occupation_unresolved',
+      candidateOccupation,
+      jobOccupation: null,
+    };
   }
 
-  for (const jobDomainId of jobDomains) {
-    if (areStaticallyAdjacent(candidateDomainId, jobDomainId)) {
-      return { category: 'adjacent', multiplier: ADJACENT_MULTIPLIER, reason: 'adjacent_domain_pair' };
-    }
-  }
+  const relation = familyRelation(candidateOccupation.iscoGroup, jobOccupation.iscoGroup);
 
-  // Bridging check — does the JOB'S OWN text show any sign of the
-  // candidate's domain, even when its title/description didn't match any
-  // recognized family at all (jobDomains.size === 0)? DOMAIN_FAMILIES's
-  // titleKeywords are deliberately narrow, so plenty of genuinely relevant,
-  // informally- or differently-worded titles ("Digital Marketing Sales
-  // Executive" for a marketing candidate) never match a family outright —
-  // this is what still recognizes them as a credible transition instead of
-  // falling into the weak-evidence bucket below purely because the keyword
-  // list didn't happen to cover that phrasing.
-  const candidateFamily = findFamily(candidateDomainId);
-  const combinedJobText = normalize(`${jobTitle} ${jobDescription ?? ''}`);
-  if (candidateFamily?.hintWords.some((hint) => containsPhrase(combinedJobText, hint))) {
-    return { category: 'adjacent', multiplier: ADJACENT_MULTIPLIER, reason: 'related_domain_terms_present' };
+  if (relation === 'same') {
+    return { category: 'same_domain', multiplier: SAME_FAMILY_MULTIPLIER, reason: 'same_family', candidateOccupation, jobOccupation };
   }
-
-  if (jobDomains.size === 0) {
-    // The job's title/description gave no signal at all — not a
-    // recognized family, not even the candidate's own domain's hint words.
-    // Genuine missing evidence, not a confirmed mismatch: an informal or
-    // unusual title ("Head of People", "Sales Jedi", "Senior Independent AI
-    // Engineer / Architect") legitimately can't be classified from this
-    // small, non-exhaustive keyword list, but that is not the same thing as
-    // confirming it's unrelated — see WEAK_EVIDENCE_MULTIPLIER above.
-    return { category: 'unknown', multiplier: WEAK_EVIDENCE_MULTIPLIER, reason: 'job_domain_unknown' };
+  if (relation === 'adjacent') {
+    return { category: 'adjacent', multiplier: ADJACENT_MULTIPLIER, reason: 'adjacent_isco_group', candidateOccupation, jobOccupation };
   }
-
-  return { category: 'unrelated', multiplier: UNRELATED_MULTIPLIER, cap: UNRELATED_CAP, reason: 'different_domain' };
+  return {
+    category: 'unrelated',
+    multiplier: UNRELATED_MULTIPLIER,
+    cap: UNRELATED_CAP,
+    reason: 'different_family',
+    candidateOccupation,
+    jobOccupation,
+  };
 }

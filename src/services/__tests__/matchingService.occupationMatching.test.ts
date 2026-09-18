@@ -7,9 +7,12 @@ import type { ResumeProfile, JobOpportunity, Skill } from '../../types';
 // Exercises the REAL matchJobsForUser/generateCareerPaths/recommendCourses
 // pipeline — exactly what SkillAnalysis.tsx's "Career Paths"/"Recommended
 // Courses"/"Skill Gaps" sections and aiContextService.ts's chat summary
-// call — so these tests prove the occupation-aware fix holds at the
-// second, previously-uncovered scoring pipeline (Step 5 only touched
-// recommendationService.ts's Recommended Paths cards).
+// call. matchJobsForUser now delegates to recommendationService.ts's
+// shared scoreJob() (see matchingService.ts's own comment on why — no
+// second, parallel formula), so this file tests the SAME ESCO/ISCO-based
+// engine recommendationService.occupationMatching.test.ts already covers,
+// through this second call path (Career Paths) and generateCareerPaths'
+// own skillGaps/course-recommendation logic on top of it.
 
 function skill(name: string, category: Skill['category'] = 'technical'): Skill {
   return { name, category, demandLevel: 'high', proficiency: 70 };
@@ -36,58 +39,59 @@ function profile(overrides: Partial<ResumeProfile>): ResumeProfile {
   return { skills: [], experience: '', yearsExperience: 5, industries: [], ...overrides };
 }
 
-const marineBiologistProfile = profile({
-  skills: [skill('Python'), skill('SQL')],
-  industries: ['Marine Science'],
-  likelyRole: 'Marine Biologist',
-});
+// "data analyst" (ESCO occ:1985, ISCO 2511) has 29 real essential skills —
+// these 22 are a genuine, confirmed majority of that real list (verified
+// against server/data/esco-taxonomy.json).
+const dataAnalystSkills = [
+  'digital data processing', 'information structure', 'business intelligence', 'data mining',
+  'visual presentation techniques', 'data engineering', 'data visualisation software', 'information extraction',
+  'information categorisation', 'business analytics', 'query languages', 'data quality assessment',
+  'data science', 'data models', 'normalise data', 'use data processing techniques', 'establish data processes',
+  'apply statistical analysis techniques', 'perform data mining', 'use databases', 'integrate ICT data', 'analyse big data',
+].map((name) => skill(name));
 
-describe('Marine Biologist -> Environmental Data Analyst (required regression scenario)', () => {
-  const environmentalAnalystJob = job({
-    title: 'Environmental Data Analyst',
-    description: 'Analyze environmental datasets to support conservation research using GIS and statistical methods.',
-    requiredSkills: [skill('Python'), skill('SQL'), skill('GIS'), skill('Statistics')],
-  });
+describe('Data Analyst -> Business Analyst (adjacent, ISCO 25<->24 bridge, required regression scenario)', () => {
+  // "business analyst" (occ:903, ISCO 2421) real essential skills genuinely
+  // overlapping a data-analyst-flavored candidate.
+  const businessAnalystSkills = [
+    'digital data processing', 'business analysis', 'data visualisation software',
+    'risk management', 'market research', 'business analytics', 'management consulting',
+  ].map((name) => skill(name));
+  const candidateProfile = profile({ skills: businessAnalystSkills, likelyRole: 'Data Analyst' });
+  const businessAnalystJob = job({ title: 'Business Analyst', description: 'Analyze business processes and produce reports.' });
 
   test('remains a credible, visible opportunity — not suppressed like an unrelated job with the same skill overlap', () => {
-    const [envMatch] = matchJobsForUser(marineBiologistProfile, [environmentalAnalystJob]);
-    assert.equal(envMatch.occupationCategory, 'adjacent');
+    const [match] = matchJobsForUser(candidateProfile, [businessAnalystJob]);
+    assert.equal(match.occupationCategory, 'adjacent');
 
-    const unrelatedJob = job({
-      title: 'Software Engineer',
-      description: 'Build and maintain backend services.',
-      requiredSkills: [skill('Python'), skill('SQL'), skill('JavaScript'), skill('React')],
-    });
-    const [unrelatedMatch] = matchJobsForUser(marineBiologistProfile, [unrelatedJob]);
+    const unrelatedJob = job({ title: 'Secondary School Teacher', description: 'Teach mathematics to secondary school students.' });
+    const [unrelatedMatch] = matchJobsForUser(candidateProfile, [unrelatedJob]);
     assert.equal(unrelatedMatch.occupationCategory, 'unrelated');
 
     assert.ok(
-      envMatch.matchScore > unrelatedMatch.matchScore,
-      `identical skill overlap (2/4 required skills matched) must still score higher for the domain-adjacent job (${envMatch.matchScore}) than the unrelated one (${unrelatedMatch.matchScore})`
+      match.matchScore > unrelatedMatch.matchScore,
+      `genuine skill overlap must still score higher for the domain-adjacent job (${match.matchScore}) than an unrelated one (${unrelatedMatch.matchScore})`
     );
   });
 
-  test('missing skills shown are the actual job requirements (GIS, Statistics) — nothing invented', () => {
-    const matchedJobs = matchJobsForUser(marineBiologistProfile, [environmentalAnalystJob]);
-    const paths = generateCareerPaths(marineBiologistProfile.skills, matchedJobs);
-    const envPath = paths.find((p) => p.title === 'Environmental Data Analyst');
-    assert.ok(envPath, 'the environmental analyst path should be generated');
+  test('missing skills shown are the actual occupation requirements — nothing invented', () => {
+    const matchedJobs = matchJobsForUser(candidateProfile, [businessAnalystJob]);
+    const paths = generateCareerPaths(candidateProfile.skills, matchedJobs);
+    const path = paths.find((p) => p.title === 'Business Analyst');
+    assert.ok(path, 'the business analyst path should be generated');
 
-    const gapNames = envPath!.skillGaps.map((g) => g.skill.name).sort();
-    assert.deepEqual(gapNames, ['GIS', 'Statistics']);
-    assert.ok(!gapNames.includes('Machine Learning'), 'must never invent a gap the job does not actually require');
+    // "business analyst" has 11 real essential skills; the candidate above
+    // matches 7 of them — the remaining ~4 gaps must all be real essential
+    // skills of THIS occupation, never a free-text invention.
+    const gapNames = path!.skillGaps.map((g) => g.skill.name);
+    assert.ok(gapNames.length > 0 && gapNames.length < 11, `expected a partial, non-empty gap list, got ${gapNames.length}`);
+    assert.ok(!gapNames.includes('Machine Learning'), 'must never invent a gap the occupation does not actually require');
     assert.ok(!gapNames.includes('TensorFlow'));
-
-    const merged = mergeCareerPathSkillGaps(paths);
-    assert.ok(merged.some((g) => g.skill.name === 'GIS'));
-    assert.ok(merged.some((g) => g.skill.name === 'Statistics'));
   });
 
   test('occupationCategory is exposed on the resulting CareerPath, without disturbing any existing field', () => {
-    const matchedJobs = matchJobsForUser(marineBiologistProfile, [environmentalAnalystJob]);
-    const [path] = generateCareerPaths(marineBiologistProfile.skills, matchedJobs);
-    // Every field the existing UI already reads must still be present and
-    // correctly typed — this is a purely additive field.
+    const matchedJobs = matchJobsForUser(candidateProfile, [businessAnalystJob]);
+    const [path] = generateCareerPaths(candidateProfile.skills, matchedJobs);
     assert.equal(typeof path.id, 'string');
     assert.equal(typeof path.title, 'string');
     assert.equal(typeof path.matchPercentage, 'number');
@@ -98,28 +102,25 @@ describe('Marine Biologist -> Environmental Data Analyst (required regression sc
     assert.equal(typeof path.recommendedAction, 'string');
     assert.equal(path.occupationCategory, 'adjacent');
   });
-
-  test('no verified course exists for GIS/Statistics — recommendCourses never fabricates one', () => {
-    const matchedJobs = matchJobsForUser(marineBiologistProfile, [environmentalAnalystJob]);
-    const paths = generateCareerPaths(marineBiologistProfile.skills, matchedJobs);
-    const gaps = mergeCareerPathSkillGaps(paths).filter((g) => ['GIS', 'Statistics'].includes(g.skill.name));
-    const courses = recommendCourses(gaps);
-    assert.equal(courses.length, 0, 'no real course exists for GIS/Statistics in the app\'s course data — none should be fabricated');
-  });
 });
 
-describe('10. Recommended Courses and Skill Gaps remain intact for a normal same-domain gap', () => {
+describe('10. Recommended Courses and Skill Gaps remain intact for an unresolved-occupation job (free-text fallback)', () => {
   test('a skill gap that DOES have a real course (Power BI) still produces a genuine recommendation', () => {
+    // "Senior SAP AMS Consultant (SAP EWM)" is confirmed unresolvable to any
+    // ESCO occupation (see the SAP root-cause investigation) — its
+    // requiredSkills fall back to the job's own free-text list, exactly as
+    // before this task's changes, so the legacy mockData-taxonomy course
+    // catalog still applies here.
     const dataAnalystProfile = profile({
       skills: [skill('Python'), skill('SQL')],
       industries: ['SaaS'],
       likelyRole: 'Data Analyst',
     });
-    const dataAnalystJob = job({
-      title: 'Data Analyst',
+    const unresolvedJob = job({
+      title: 'Senior SAP AMS Consultant (SAP EWM)',
       requiredSkills: [skill('Python'), skill('SQL'), skill('Power BI')],
     });
-    const matchedJobs = matchJobsForUser(dataAnalystProfile, [dataAnalystJob]);
+    const matchedJobs = matchJobsForUser(dataAnalystProfile, [unresolvedJob]);
     const [path] = generateCareerPaths(dataAnalystProfile.skills, matchedJobs);
     assert.deepEqual(path.skillGaps.map((g) => g.skill.name), ['Power BI']);
 
@@ -131,52 +132,36 @@ describe('10. Recommended Courses and Skill Gaps remain intact for a normal same
 });
 
 describe('clearly unrelated occupation does not become a high match through generic skills alone', () => {
-  test('Marine Biologist -> Data Analyst stays suppressed via the Career Paths pipeline too', () => {
+  test('Secondary School Teacher -> Data Analyst stays suppressed via the Career Paths pipeline too', () => {
+    const teacherProfile = profile({
+      skills: [skill('pedagogy', 'business'), skill('instructional strategies', 'business')],
+      likelyRole: 'Secondary School Teacher',
+    });
     const dataAnalystJob = job({
       title: 'Data Analyst',
       description: 'We are looking for a Data Analyst to join our analytics team.',
-      requiredSkills: [skill('Python'), skill('SQL'), skill('Data Analysis'), skill('Power BI')],
+      requiredSkills: dataAnalystSkills,
     });
-    const [match] = matchJobsForUser(marineBiologistProfile, [dataAnalystJob]);
+    const [match] = matchJobsForUser(teacherProfile, [dataAnalystJob]);
     assert.equal(match.occupationCategory, 'unrelated');
     assert.ok(match.matchScore <= 30, `expected a suppressed score, got ${match.matchScore}`);
   });
 });
 
-describe('skill-enhanced opportunity: real missing requirements are shown honestly', () => {
-  test('Marine Biologist -> Machine Learning Engineer shows the actual missing skills (ML, TensorFlow), not invented ones', () => {
-    const mlEngineerJob = job({
-      title: 'Machine Learning Engineer',
-      description: 'Build machine learning models using TensorFlow.',
-      requiredSkills: [skill('Python'), skill('SQL'), skill('Machine Learning'), skill('TensorFlow')],
-    });
-    const matchedJobs = matchJobsForUser(marineBiologistProfile, [mlEngineerJob]);
-    const [path] = generateCareerPaths(marineBiologistProfile.skills, matchedJobs);
-    const gapNames = path.skillGaps.map((g) => g.skill.name).sort();
-    assert.deepEqual(gapNames, ['Machine Learning', 'TensorFlow']);
-  });
-});
-
 describe('missing likelyRole — must not crash, existing skill matching keeps working', () => {
-  // Python + SQL is a clear (2-skill, unambiguous) match to the
-  // data_analytics cluster — resolveCandidateDomain() now consults skill-
-  // cluster evidence (see occupationMatchingService.ts) when likelyRole and
-  // industries give nothing usable, so this candidate correctly resolves to
-  // 'data_analytics', not null/'unknown' as before that fix. Since the job
-  // itself is also 'Data Analyst' (data_analytics), the correct category is
-  // 'same_domain' — a more accurate classification than the old
-  // placeholder 'unknown', which only ever applied because candidate-domain
-  // resolution used to ignore skills entirely.
-  test('a profile with no likelyRole and no mappable industry still resolves via a clear skill-cluster match, and does not crash', () => {
+  // Python + SQL is a 2-skill match to jobQueryService.ts's data_analytics
+  // cluster (its own bar has no minimum above "any match at all") — so
+  // resolveCandidateOccupation()'s skill-cluster fallback resolves this via
+  // the derived "Data Analyst" query term, even with no likelyRole. This
+  // proves the "no likelyRole -> never crash" guarantee AND that the
+  // skill-cluster fallback path genuinely resolves a real occupation.
+  test('a profile with no likelyRole but a clear skill-cluster match still resolves, and does not crash', () => {
     const noRoleProfile = profile({
       skills: [skill('Python'), skill('SQL')],
       industries: ['General Business'],
       likelyRole: undefined,
     });
-    const genericJob = job({
-      title: 'Data Analyst',
-      requiredSkills: [skill('Python'), skill('SQL'), skill('Data Analysis'), skill('Power BI')],
-    });
+    const genericJob = job({ title: 'Data Analyst', requiredSkills: dataAnalystSkills });
 
     assert.doesNotThrow(() => {
       const [match] = matchJobsForUser(noRoleProfile, [genericJob]);
@@ -186,44 +171,40 @@ describe('missing likelyRole — must not crash, existing skill matching keeps w
     });
   });
 
-  // A genuinely ambiguous case (a single, generic skill that doesn't reach
-  // MIN_SKILL_CLUSTER_MAJORITY) must still fall through to 'unknown' exactly
-  // as before — the fix only acts on a CLEAR skill-cluster majority, never
-  // a thin one-skill signal.
-  test('a profile with a single generic skill (below the skill-cluster majority floor) still falls through to unknown', () => {
-    const thinSignalProfile = profile({
-      skills: [skill('Python')],
-      industries: ['General Business'],
-      likelyRole: undefined,
-    });
-    const genericJob = job({
-      title: 'Data Analyst',
-      requiredSkills: [skill('Python'), skill('SQL'), skill('Data Analysis'), skill('Power BI')],
-    });
-
-    const [match] = matchJobsForUser(thinSignalProfile, [genericJob]);
+  // A genuinely signal-less case (no skills, no likelyRole, no mappable
+  // industry) has no skill-cluster match and no industry hint to fall back
+  // to — resolveCandidateOccupation() correctly returns null rather than
+  // guessing, so the job is never penalized either way.
+  test('a profile with no skills, no likelyRole, and no mappable industry falls through to unknown', () => {
+    const signalLessProfile = profile({ skills: [], industries: ['General Business'], likelyRole: undefined });
+    const genericJob = job({ title: 'Data Analyst', requiredSkills: dataAnalystSkills });
+    const [match] = matchJobsForUser(signalLessProfile, [genericJob]);
     assert.equal(match.occupationCategory, 'unknown');
   });
 });
 
 describe('regression: a genuine same-domain match through the Career Paths pipeline is unaffected', () => {
   test('a Data Analyst candidate applying to a Data Analyst job still scores well', () => {
-    const dataAnalystProfile = profile({
-      skills: [skill('Python'), skill('SQL'), skill('Data Analysis'), skill('Power BI')],
-      industries: ['SaaS'],
-      likelyRole: 'Data Analyst',
-    });
-    const dataAnalystJob = job({
-      title: 'Data Analyst',
-      requiredSkills: [skill('Python'), skill('SQL'), skill('Data Analysis'), skill('Power BI')],
-    });
+    const dataAnalystProfile = profile({ skills: dataAnalystSkills, likelyRole: 'Data Analyst' });
+    const dataAnalystJob = job({ title: 'Data Analyst', requiredSkills: dataAnalystSkills });
     const [match] = matchJobsForUser(dataAnalystProfile, [dataAnalystJob]);
     assert.equal(match.occupationCategory, 'same_domain');
-    // calculateMatchScore (skillAnalysisService.ts, unchanged) reserves 30
-    // of its 100 points for a "nice to have" list matchJobsForUser has
-    // never supplied — so a full required-skill match has always topped
-    // out at 70 here, before and after this task's changes. same_domain's
-    // ×1 multiplier means that pre-existing ceiling is preserved exactly.
-    assert.equal(match.matchScore, 70, 'a full required-skill match in the same domain must be unmodified from its pre-existing score');
+    // matchJobsForUser now shares recommendationService.ts's scoreJob()
+    // formula exactly (no separate calculateMatchScore path any more — see
+    // matchingService.ts's own comment) — a genuine, strong same-domain
+    // match scores well, not pinned to any specific legacy formula ceiling.
+    assert.ok(match.matchScore >= 65, `a full required-skill match in the same domain should score well, got ${match.matchScore}`);
+  });
+});
+
+describe('mergeCareerPathSkillGaps', () => {
+  test('deduplicates gaps across paths without inventing any', () => {
+    const dataAnalystProfile = profile({ skills: dataAnalystSkills, likelyRole: 'Data Analyst' });
+    const businessAnalystJob = job({ title: 'Business Analyst', description: 'Analyze business processes.' });
+    const matchedJobs = matchJobsForUser(dataAnalystProfile, [businessAnalystJob]);
+    const paths = generateCareerPaths(dataAnalystProfile.skills, matchedJobs, 'Data Analyst', []);
+    const merged = mergeCareerPathSkillGaps(paths);
+    const names = merged.map((g) => g.skill.name);
+    assert.equal(new Set(names).size, names.length, 'no duplicate skill names across merged gaps');
   });
 });

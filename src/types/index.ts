@@ -16,6 +16,13 @@ export interface Skill {
   category: 'technical' | 'business' | 'general';
   demandLevel: 'very_high' | 'high' | 'medium';
   proficiency: number;
+  // Present when this Skill was matched against the ESCO taxonomy
+  // (escoTaxonomyClient.ts / server's escoTaxonomyService.js) — the compact
+  // id from server/data/esco-taxonomy.json, e.g. "skill:218". Absent for a
+  // skill sourced from the legacy mockData.ts taxonomy (mock jobs/gigs).
+  // Used to compute skill gaps as a real set difference against an
+  // occupation's essential skill ids, never by name-matching free text.
+  escoId?: string;
 }
 
 export interface SuggestedCareerPath {

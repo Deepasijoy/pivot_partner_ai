@@ -1,5 +1,6 @@
 import type { Skill } from '../types';
 import { mockSkillTaxonomy } from './mockData';
+import { findEscoSkillsInText } from './escoTaxonomyClient';
 
 // Shared skill-extraction logic for BOTH resume text and job-description
 // text — a single implementation so the two call sites (resumeParserService.ts,
@@ -456,6 +457,23 @@ export function detectSkills(text: string): Skill[] {
       seen.add(skill.name.toLowerCase());
       matched.push(skill);
     }
+  }
+
+  // ESCO taxonomy pass — additive, never overrides a mockData.ts taxonomy
+  // match already found above (this legacy taxonomy's own category/demand/
+  // proficiency values are preserved exactly for every skill it already
+  // covers). What this adds is real coverage for everything the ~200-skill
+  // legacy taxonomy never had at all — Power BI, SAP/ERP systems, credit
+  // risk analysis, and the ~2,500-skill ESCO vocabulary generally (see
+  // escoTaxonomyClient.ts and README.md's ESCO section) — so a term that
+  // used to fall through to buildUnknownSkill()'s generic "unrecognized"
+  // bucket below, or go undetected entirely, now resolves to a real,
+  // categorized skill with a stable escoId, which recommendationService.ts
+  // relies on for essential-skill-based gap matching.
+  for (const skill of findEscoSkillsInText(text)) {
+    if (seen.has(skill.name.toLowerCase())) continue;
+    seen.add(skill.name.toLowerCase());
+    matched.push(skill);
   }
 
   // Preserve skills mentioned in an explicit Skills/Requirements-style

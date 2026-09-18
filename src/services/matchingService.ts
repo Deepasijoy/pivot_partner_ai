@@ -1,69 +1,67 @@
 import type { ResumeProfile, Skill, JobOpportunity, FreelanceGig, CareerPath, CareerPathDataState, SkillGap } from '../types';
 import { mockRemoteJobs, mockFreelanceGigs } from './mockData';
-import { calculateMatchScore, calculateSkillGaps } from './skillAnalysisService';
-import { classifyOccupationCompatibility } from './occupationMatchingService';
+import { calculateSkillGaps } from './skillAnalysisService';
+import { scoreJob } from './recommendationService';
 
-// Occupation/domain compatibility is applied here exactly the same way
-// recommendationService.ts's scoreJob() applies it — a gate on the
-// existing skill-based score (calculateMatchScore, unchanged), never an
-// additive term, so raw skill overlap alone can no longer make a clearly
-// unrelated job (or Career Path built from one) look like a strong match.
-// This is what feeds SkillAnalysis.tsx's "Career Paths" section and the
-// AI context/chat summary — the same failure mode Step 5 already closed
-// for the main Recommended Paths cards existed here too, just via a
-// separate scoring pipeline (calculateMatchScore has no occupation
-// awareness of its own, by design — see skillAnalysisService.ts).
+// Scores every job through the EXACT same scoreJob() formula/gate
+// rankJobsForUser() (recommendationService.ts) uses — not a second,
+// parallel implementation — so a job's score can never drift between the
+// main Recommended Paths cards and this Career Paths view of the same job.
 export function matchJobsForUser(profile: ResumeProfile, jobs: JobOpportunity[] = mockRemoteJobs): JobOpportunity[] {
   return jobs
     .map((job) => {
-      const rawScore = calculateMatchScore(profile.skills, job.requiredSkills, []);
-      const compatibility = classifyOccupationCompatibility(
-        profile.likelyRole,
-        profile.industries,
-        job.title,
-        job.description,
-        profile.skills
-      );
-      let matchScore = Math.round(rawScore * compatibility.multiplier);
-      if (compatibility.cap !== undefined) {
-        matchScore = Math.min(matchScore, compatibility.cap);
-      }
-      matchScore = Math.max(0, Math.min(100, matchScore));
-      return { ...job, matchScore, occupationCategory: compatibility.category };
+      const score = scoreJob(profile, job);
+      return {
+        ...job,
+        matchScore: score.matchScore,
+        occupationCategory: score.occupationCompatibility.category,
+        // See rankJobsForUser()'s identical fix (recommendationService.ts)
+        // for why: downstream (generateCareerPaths -> calculateSkillGaps)
+        // must see the EFFECTIVE requirement list scoreJob() actually used,
+        // not the job's original free-text requiredSkills.
+        requiredSkills: [...score.matchedSkills, ...score.missingSkills],
+        matchedSkills: score.matchedSkills,
+        missingSkills: score.missingSkills,
+      };
     })
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, 5);
 }
 
-// Occupation/domain compatibility applied to freelance gigs exactly the
-// same way matchJobsForUser applies it to jobs (Step D) — a gate on the
-// existing skill-based score, never an additive term, so an occupationally
-// irrelevant gig with a lucky skill overlap (e.g. a generic "Excel" or
-// "Data Analysis" requirement) can't outrank a genuinely relevant one.
-// likelyRole/industries are optional so any existing caller that doesn't
-// have profile context keeps working exactly as before (an unresolvable
-// candidate domain is 'unknown', multiplier 1 — see
-// occupationMatchingService.ts) — this never regresses a case that worked
-// before Step D, it only adds gating where profile context is available.
+// Freelance gigs go through the SAME scorer and bands as job listings — no
+// separate formula, no default/hardcoded band. A gig has no company/
+// description/salary the way a JobOpportunity does, so it's wrapped into
+// that shape (platform standing in for company, budget for salaryRange,
+// title-only for description since a gig's real requirements already live
+// in requiredSkills) purely so scoreJob() can run unmodified; nothing about
+// scoreJob() itself changes for this caller.
+function asScorableJobOpportunity(gig: FreelanceGig): JobOpportunity {
+  return {
+    id: gig.id,
+    title: gig.title,
+    company: gig.platform,
+    salaryRange: gig.budget,
+    timezone: 'Freelance',
+    matchScore: 0,
+    requiredSkills: gig.requiredSkills,
+    matchedSkills: [],
+    missingSkills: gig.requiredSkills,
+    description: gig.title,
+    employmentMatch: 0,
+  };
+}
+
 export function matchFreelanceForUser(
   userSkills: Skill[],
   likelyRole?: string,
   industries?: string[],
   gigs: FreelanceGig[] = mockFreelanceGigs
 ): FreelanceGig[] {
+  const profile: ResumeProfile = { skills: userSkills, experience: '', yearsExperience: 0, industries: industries ?? [], likelyRole };
   return gigs
     .map((gig) => {
-      const rawScore = calculateMatchScore(userSkills, gig.requiredSkills, []);
-      // FreelanceGig has no description field — classification relies on
-      // the gig's title alone, which still catches same-domain/adjacent
-      // gigs and the hint-word bridge (occupationMatchingService.ts).
-      const compatibility = classifyOccupationCompatibility(likelyRole, industries, gig.title, undefined, userSkills);
-      let matchPercentage = Math.round(rawScore * compatibility.multiplier);
-      if (compatibility.cap !== undefined) {
-        matchPercentage = Math.min(matchPercentage, compatibility.cap);
-      }
-      matchPercentage = Math.max(0, Math.min(100, matchPercentage));
-      return { ...gig, matchPercentage, occupationCategory: compatibility.category };
+      const score = scoreJob(profile, asScorableJobOpportunity(gig));
+      return { ...gig, matchPercentage: score.matchScore, occupationCategory: score.occupationCompatibility.category };
     })
     .sort((a, b) => b.matchPercentage - a.matchPercentage)
     .slice(0, 3);

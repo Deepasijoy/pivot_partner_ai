@@ -80,7 +80,13 @@ describe('Career Path data states (Step C)', () => {
 
   test('SKILL_ENHANCED: real requirements exist, some overlap, real remaining gaps — both lines agree on the gap, nothing invented', () => {
     const partialJob = job({
-      title: 'Finance Manager',
+      // Deliberately NOT an exact ESCO occupation label (confirmed: "Finance
+      // Manager" resolves to a real ESCO occupation with 14 essential
+      // skills, which would replace this test's own fixture list — see
+      // recommendationService.ts's effectiveRequiredSkills()). "Finance
+      // Generalist" is confirmed unresolved, so job.requiredSkills below
+      // stays authoritative, which is what this test is actually about.
+      title: 'Finance Generalist',
       company: 'Global Finance Co',
       requiredSkills: [skill('Financial Analysis', 'business'), skill('Excel', 'business'), skill('Financial Modeling', 'business')],
     });

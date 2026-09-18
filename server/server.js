@@ -11,6 +11,13 @@ import {
   parseClassifierResult,
 } from './scopeGuard.js'
 import { fetchWithRetry } from './fetchWithRetry.js'
+import { extractSkillsFromText } from './services/skillExtractionService.js'
+import {
+  resolveOccupation,
+  getEssentialSkillIds,
+  getOptionalSkillIds,
+  getSkill,
+} from './services/escoTaxonomyService.js'
 
 dotenv.config()
 
@@ -88,6 +95,25 @@ const chatRateLimiter = rateLimited('/api/chat', CHAT_RATE_LIMIT_WINDOW_MS, CHAT
 const jobsRateLimiter = rateLimited('/api/jobs', JOBS_RATE_LIMIT_WINDOW_MS, JOBS_RATE_LIMIT_MAX)
 const jsearchRateLimiter = rateLimited('/api/jobs/jsearch', JSEARCH_RATE_LIMIT_WINDOW_MS, JSEARCH_RATE_LIMIT_MAX)
 const himalayasRateLimiter = rateLimited('/api/jobs/himalayas', HIMALAYAS_RATE_LIMIT_WINDOW_MS, HIMALAYAS_RATE_LIMIT_MAX)
+
+// Skill extraction accepts a BATCH of texts per request (one resume, or one
+// whole job-search page of listings) specifically so a Local+Hybrid+Remote
+// search's worth of jobs costs one rate-limited request, not one per job —
+// each text in the batch may still trigger its own Groq fallback call
+// server-side, so this stays capped like /api/chat rather than as loose as
+// the free job-provider proxies.
+const SKILLS_RATE_LIMIT_WINDOW_MS = Number(process.env.SKILLS_RATE_LIMIT_WINDOW_MS) || 60_000
+const SKILLS_RATE_LIMIT_MAX = Number(process.env.SKILLS_RATE_LIMIT_MAX) || 20
+const skillsRateLimiter = rateLimited('/api/skills/extract', SKILLS_RATE_LIMIT_WINDOW_MS, SKILLS_RATE_LIMIT_MAX)
+
+// Occupation resolution is pure in-memory label matching (no external API
+// call), so it can afford a much higher ceiling — bounded mainly to keep
+// one client from hammering the process with huge batches.
+const OCCUPATIONS_RATE_LIMIT_WINDOW_MS = Number(process.env.OCCUPATIONS_RATE_LIMIT_WINDOW_MS) || 60_000
+const OCCUPATIONS_RATE_LIMIT_MAX = Number(process.env.OCCUPATIONS_RATE_LIMIT_MAX) || 60
+const occupationsRateLimiter = rateLimited('/api/occupations/resolve', OCCUPATIONS_RATE_LIMIT_WINDOW_MS, OCCUPATIONS_RATE_LIMIT_MAX)
+
+const MAX_BATCH_ITEMS = 50
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY
 const GROQ_API_URL =
@@ -686,6 +712,95 @@ app.get('/api/jobs/himalayas', himalayasRateLimiter, async (req, res) => {
     res.status(500).json({
       error: error.message || 'Himalayas job search failed',
     })
+  }
+})
+
+// ============================================
+// SKILL EXTRACTION (ESCO) — matches resume/job text against the compact
+// ESCO taxonomy (server/data/esco-taxonomy.json), falling back to Groq
+// (skillExtractionLLM.js) for whatever direct label/alias matching misses.
+// Kept server-side because (a) the taxonomy is ~3MB, too big to ship to
+// every browser tab on every page load, and (b) the Groq fallback needs
+// GROQ_API_KEY, which must never reach the client. Accepts a batch so one
+// job search's worth of listings costs one rate-limited request.
+// ============================================
+
+app.post('/api/skills/extract', skillsRateLimiter, async (req, res) => {
+  try {
+    const body = req.body || {}
+    const texts = Array.isArray(body.texts) ? body.texts : typeof body.text === 'string' ? [body.text] : null
+
+    if (!texts) {
+      return res.status(400).json({ error: 'Request must include "text" (string) or "texts" (string[]).' })
+    }
+    if (texts.length === 0) {
+      return res.json({ results: [] })
+    }
+    if (texts.length > MAX_BATCH_ITEMS) {
+      return res.status(400).json({ error: `A single request may include at most ${MAX_BATCH_ITEMS} texts.` })
+    }
+    if (texts.some((t) => typeof t !== 'string')) {
+      return res.status(400).json({ error: 'Every entry in "texts" must be a string.' })
+    }
+
+    const results = await Promise.all(texts.map((text) => extractSkillsFromText(text)))
+
+    if (typeof body.text === 'string') {
+      return res.json(results[0])
+    }
+    res.json({ results })
+  } catch (error) {
+    console.error('❌ Skill extraction error:', error)
+    res.status(500).json({ error: error.message || 'Skill extraction failed' })
+  }
+})
+
+// ============================================
+// OCCUPATION RESOLUTION (ESCO) — maps free text (a job title, or a resume's
+// stated role) to its closest ESCO occupation, ISCO group, and essential/
+// optional skill ids. Pure in-memory label matching — no external API call,
+// so no Groq fallback and no per-request cost beyond CPU.
+// ============================================
+
+function resolveOccupationWithSkills(text) {
+  const occupation = resolveOccupation(text)
+  if (!occupation) return null
+
+  const essentialSkillIds = getEssentialSkillIds(occupation.id)
+  const optionalSkillIds = getOptionalSkillIds(occupation.id)
+  return {
+    occupationId: occupation.id,
+    label: occupation.label,
+    iscoGroup: occupation.iscoGroup,
+    essentialSkills: essentialSkillIds.map((id) => getSkill(id)).filter(Boolean),
+    optionalSkills: optionalSkillIds.map((id) => getSkill(id)).filter(Boolean),
+  }
+}
+
+app.post('/api/occupations/resolve', occupationsRateLimiter, (req, res) => {
+  try {
+    const body = req.body || {}
+    const texts = Array.isArray(body.texts) ? body.texts : typeof body.text === 'string' ? [body.text] : null
+
+    if (!texts) {
+      return res.status(400).json({ error: 'Request must include "text" (string) or "texts" (string[]).' })
+    }
+    if (texts.length > MAX_BATCH_ITEMS) {
+      return res.status(400).json({ error: `A single request may include at most ${MAX_BATCH_ITEMS} texts.` })
+    }
+    if (texts.some((t) => typeof t !== 'string')) {
+      return res.status(400).json({ error: 'Every entry in "texts" must be a string.' })
+    }
+
+    const results = texts.map((text) => resolveOccupationWithSkills(text))
+
+    if (typeof body.text === 'string') {
+      return res.json(results[0] ?? null)
+    }
+    res.json({ results })
+  } catch (error) {
+    console.error('❌ Occupation resolution error:', error)
+    res.status(500).json({ error: error.message || 'Occupation resolution failed' })
   }
 })
 

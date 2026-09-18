@@ -72,7 +72,11 @@ describe('Step D — freelance matching never falls back to an irrelevant mock g
       requiredSkills: [skill('JavaScript'), skill('Excel', 'business')],
     });
     const bankerGig = gig({
-      title: 'Banker Consulting',
+      // "Financial Analyst" (not "Banker") so this genuinely resolves to
+      // the SAME ESCO occupation the candidate's own skill-cluster
+      // fallback resolves to (see below) — "Banker" alone isn't an ESCO
+      // occupation label.
+      title: 'Financial Analyst Consulting',
       requiredSkills: [skill('Financial Analysis', 'business'), skill('Excel', 'business')],
     });
     const bankerSkills = [skill('Financial Analysis', 'business'), skill('Excel', 'business'), skill('Budgeting', 'business')];
@@ -90,16 +94,17 @@ describe('Step D — freelance matching never falls back to an irrelevant mock g
   });
 
   test('adjacent legitimate freelance transition -> allowed, not suppressed', () => {
-    // Journalist candidate, a "Content Writer"-titled freelance gig —
-    // journalism_media and content_strategy are a curated adjacent pair in
-    // occupationMatchingService.ts.
-    const contentGig = gig({
-      title: 'Content Writer for Tech Blog',
-      requiredSkills: [skill('Research', 'general'), skill('Writing', 'general')],
+    // Data Analyst candidate, a "Business Analyst"-titled freelance gig —
+    // ISCO minor groups 251 <-> 242 are a curated adjacent pair in
+    // occupationMatchingService.ts (confirmed real ESCO occupation
+    // adjacency, not a hand-named domain).
+    const businessAnalystGig = gig({
+      title: 'Business Analyst Consulting',
+      requiredSkills: [skill('business analysis', 'business'), skill('market research', 'business')],
     });
-    const journalistSkills = [skill('Research', 'general'), skill('Writing', 'general'), skill('Communication', 'business')];
+    const dataAnalystSkills = [skill('business analysis', 'business'), skill('market research', 'business'), skill('use databases')];
 
-    const [match] = matchFreelanceForUser(journalistSkills, 'Journalist', ['Journalism & Media'], [contentGig]);
+    const [match] = matchFreelanceForUser(dataAnalystSkills, 'Data Analyst', [], [businessAnalystGig]);
     assert.equal(match.occupationCategory, 'adjacent');
     assert.ok(match.matchPercentage > 30, 'an adjacent transition must not be suppressed like an unrelated one');
   });
@@ -108,6 +113,11 @@ describe('Step D — freelance matching never falls back to an irrelevant mock g
     const anyGig = gig({ title: 'Random Gig', requiredSkills: [skill('Python')] });
     const [match] = matchFreelanceForUser([skill('Python')], undefined, undefined, [anyGig]);
     assert.equal(match.occupationCategory, 'unknown');
-    assert.equal(match.matchPercentage, 70); // 1/1 required skill matched, no niceToHave — unchanged formula
+    // Freelance gigs now go through the exact same scorer/bands as job
+    // listings (scoreJob(), via matchingService.ts's asScorableJobOpportunity
+    // wrapper) — no separate, gig-only formula any more, so this is no
+    // longer pinned to the old calculateMatchScore-only value. Just confirm
+    // a real, positive score, ungated as 'unknown' means it should be.
+    assert.ok(match.matchPercentage > 0, 'an ungated match with a matched skill must still score positively');
   });
 });

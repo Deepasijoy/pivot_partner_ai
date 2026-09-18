@@ -40,7 +40,15 @@ describe('buildAiContext — evidence grounding (5, 6)', () => {
       jobs: [
         {
           id: 'job_1',
-          title: 'Environmental Data Analyst',
+          // Deliberately NOT an exact/partial ESCO occupation label match —
+          // confirmed "Environmental Data Analyst" resolves via ESCO (it
+          // contains "data analyst" as a substring), which would replace
+          // this test's own requiredSkills fixture with the real occupation's
+          // 29 real essential skills (see recommendationService.ts's
+          // effectiveRequiredSkills()). This title is confirmed unresolved,
+          // so job.requiredSkills below stays authoritative, which is what
+          // this test (buildAiContext's formatting) is actually about.
+          title: 'Coastal Conservation Support Specialist Role',
           company: 'Acme Corp',
           salaryRange: '70000-90000',
           timezone: 'Remote',
@@ -56,12 +64,14 @@ describe('buildAiContext — evidence grounding (5, 6)', () => {
 
     const context = buildAiContext({ ...baseInput, profile: marineBiologist, careerJobs });
 
-    assert.match(context, /Environmental Data Analyst/);
+    assert.match(context, /Coastal Conservation Support Specialist Role/);
     assert.match(context, /% match/);
     assert.match(context, /has: Python, SQL/);
     // The occupation-fit note must be present so the AI has grounded
-    // language for the transition, rather than inventing its own framing.
-    assert.match(context, /plausible transition/i);
+    // language for the transition, rather than inventing its own framing —
+    // here 'unknown' (candidate's own occupation doesn't resolve to a real
+    // ESCO occupation) is the honest classification, not a guessed 'adjacent'.
+    assert.match(context, /occupation fit not determined from available evidence/i);
   });
 
   test('6. instructs the AI not to invent skills/requirements/courses when real evidence is present', () => {
