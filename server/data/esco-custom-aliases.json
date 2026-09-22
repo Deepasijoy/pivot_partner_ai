@@ -1,5 +1,5 @@
 {
-  "_comment": "Hand-curated aliases for tools/terms that ESCO has no dedicated skill for, or only under a much broader label. NOT touched by scripts/build-esco-taxonomy.mjs — kept deliberately separate from the generated esco-taxonomy.json so rebuilding the taxonomy from a newer ESCO export never overwrites these. Each key is matched as a normalized (lowercased, punctuation-stripped) whole phrase against resume/job text; each value is the skill's stable ESCO Concept URI (http://data.europa.eu/esco/skill/...) — NOT a compact skill:N id. skill:N ids are just a build-time incrementing counter over whichever skills survive scripts/build-esco-taxonomy.mjs's category filter that run, so they silently shift on every rebuild whenever the filter itself changes (this is exactly what broke SAP/credit-risk/MIS/Excel/Pandas after the HR carve-out was added — the aliases kept pointing at whatever skill happened to land on the same number afterward). A Concept URI is ESCO's own permanent identifier for the concept and never changes across rebuilds, so it's the only safe thing to pin an alias to. server/services/escoTaxonomyService.js resolves each URI to the current build's skill:N id at server startup (and throws if a URI isn't found in the current taxonomy); scripts/build-esco-client-bundle.mjs does the same at client-bundle build time; scripts/build-esco-taxonomy.mjs also validates every URI here against its freshly-built taxonomy and fails the build if one is missing, so a stale or typo'd URI can never ship silently again. See README.md's ESCO section for how this file is used.",
+  "_comment": "Hand-curated aliases for tools/terms that ESCO has no dedicated skill for, or only under a much broader label. NOT touched by scripts/build-esco-taxonomy.mjs — kept deliberately separate from the generated esco-taxonomy.json so rebuilding the taxonomy from a newer ESCO export never overwrites these. Each key is matched as a normalized (lowercased, punctuation-stripped) whole phrase against resume/job text; each value is either a single ESCO Concept URI or an ARRAY of them (http://data.europa.eu/esco/skill/...) — NOT a compact skill:N id. skill:N ids are just a build-time incrementing counter over whichever skills survive scripts/build-esco-taxonomy.mjs's category filter that run, so they silently shift on every rebuild whenever the filter itself changes (this is exactly what broke SAP/credit-risk/MIS/Excel/Pandas after the HR carve-out was added — the aliases kept pointing at whatever skill happened to land on the same number afterward). A Concept URI is ESCO's own permanent identifier for the concept and never changes across rebuilds, so it's the only safe thing to pin an alias to. An array value (see 'excel' below) resolves the SAME matched phrase to multiple distinct ESCO skills at once — used when one real-world term genuinely maps to more than one ESCO concept that different occupations separately depend on: 'excel' resolves to both 'use microsoft office' (essential for administrative assistant/secretary/etc.) and 'use spreadsheets software' (ESCO's own optional skill for data analyst) — a one-to-one alias would have forced a choice between them and silently broken essential-skill matching for whichever occupation lost out; a one-to-many resolution lets both stand. server/services/escoTaxonomyService.js resolves each URI (or each URI in an array) to the current build's skill:N id at server startup (and throws if any URI isn't found in the current taxonomy); scripts/build-esco-client-bundle.mjs does the same at client-bundle build time; scripts/build-esco-taxonomy.mjs also validates every URI here against its freshly-built taxonomy and fails the build if one is missing, so a stale or typo'd URI can never ship silently again. See README.md's ESCO section for how this file is used.",
   "power bi": "http://data.europa.eu/esco/skill/143769cb-b61e-47d8-a61e-eedfbec1016c",
   "power bi desktop": "http://data.europa.eu/esco/skill/143769cb-b61e-47d8-a61e-eedfbec1016c",
   "pbi": "http://data.europa.eu/esco/skill/143769cb-b61e-47d8-a61e-eedfbec1016c",
@@ -10,11 +10,26 @@
   "qlikview": "http://data.europa.eu/esco/skill/143769cb-b61e-47d8-a61e-eedfbec1016c",
   "qlik sense": "http://data.europa.eu/esco/skill/143769cb-b61e-47d8-a61e-eedfbec1016c",
   "looker": "http://data.europa.eu/esco/skill/143769cb-b61e-47d8-a61e-eedfbec1016c",
-  "excel": "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
-  "ms excel": "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
-  "microsoft excel": "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
-  "advanced excel": "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
-  "excel vba": "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
+  "excel": [
+    "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
+    "http://data.europa.eu/esco/skill/1973c966-f236-40c9-b2d4-5d71a89019be"
+  ],
+  "ms excel": [
+    "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
+    "http://data.europa.eu/esco/skill/1973c966-f236-40c9-b2d4-5d71a89019be"
+  ],
+  "microsoft excel": [
+    "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
+    "http://data.europa.eu/esco/skill/1973c966-f236-40c9-b2d4-5d71a89019be"
+  ],
+  "advanced excel": [
+    "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
+    "http://data.europa.eu/esco/skill/1973c966-f236-40c9-b2d4-5d71a89019be"
+  ],
+  "excel vba": [
+    "http://data.europa.eu/esco/skill/f683ae1d-cb7c-4aa1-b9fe-205e1bd23535",
+    "http://data.europa.eu/esco/skill/1973c966-f236-40c9-b2d4-5d71a89019be"
+  ],
   "sap ewm": "http://data.europa.eu/esco/skill/7c821387-b428-4f75-b5a7-7b038aa81cfd",
   "sap warehouse management": "http://data.europa.eu/esco/skill/7c821387-b428-4f75-b5a7-7b038aa81cfd",
   "extended warehouse management": "http://data.europa.eu/esco/skill/7c821387-b428-4f75-b5a7-7b038aa81cfd",

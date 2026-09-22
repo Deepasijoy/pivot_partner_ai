@@ -273,7 +273,17 @@ const ALIASES_FILE = path.join(OUT_DIR, 'esco-custom-aliases.json');
 const aliasesRaw = JSON.parse(readFileSync(ALIASES_FILE, 'utf8'));
 const { _comment: _aliasComment, ...aliasesByUri } = aliasesRaw;
 const knownSkillUris = new Set(Object.values(skills).map((s) => s.escoUri));
-const unresolvedAliases = Object.entries(aliasesByUri).filter(([, uri]) => !knownSkillUris.has(uri));
+// A phrase's value is a single URI or an ARRAY of URIs (a dual/multi-ID
+// alias, e.g. "excel" -> both "use microsoft office" and "use spreadsheets
+// software" — see esco-custom-aliases.json's own header comment) — every
+// URI in either form is validated individually.
+const unresolvedAliases = [];
+for (const [phrase, uriOrUris] of Object.entries(aliasesByUri)) {
+  const uris = Array.isArray(uriOrUris) ? uriOrUris : [uriOrUris];
+  for (const uri of uris) {
+    if (!knownSkillUris.has(uri)) unresolvedAliases.push([phrase, uri]);
+  }
+}
 
 if (unresolvedAliases.length > 0) {
   console.error(

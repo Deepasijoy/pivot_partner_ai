@@ -37,7 +37,11 @@ interface ClientOccupationEntry {
 interface ClientTaxonomy {
   skills: Record<string, ClientSkillEntry>;
   occupations: Record<string, ClientOccupationEntry>;
-  customAliases: Record<string, string>;
+  // A phrase's value is a single skill id, or an ARRAY of ids for a
+  // dual/multi-ID alias (e.g. "excel" -> both "use microsoft office" and
+  // "use spreadsheets software" — see server/data/esco-custom-aliases.json's
+  // own header comment for why).
+  customAliases: Record<string, string | string[]>;
 }
 
 const data = taxonomy as unknown as ClientTaxonomy;
@@ -63,9 +67,9 @@ function normalize(value: string): string {
 // something else.
 function buildLabelIndex<T extends { label: string; altLabels: string[] }>(
   items: Record<string, T>,
-  customAliases?: Record<string, string>
-): Map<string, string> {
-  const index = new Map<string, string>();
+  customAliases?: Record<string, string | string[]>
+): Map<string, string | string[]> {
+  const index = new Map<string, string | string[]>();
   for (const [id, item] of Object.entries(items)) {
     const norm = normalize(item.label);
     if (norm) index.set(norm, id);
@@ -85,10 +89,12 @@ function buildLabelIndex<T extends { label: string; altLabels: string[] }>(
   return index;
 }
 
+// Occupations never receive customAliases, so occupationLabelIndex entries
+// are always a single id — resolveEscoOccupation() below relies on that.
 const skillLabelIndex = buildLabelIndex(data.skills, data.customAliases);
 const occupationLabelIndex = buildLabelIndex(data.occupations);
 
-function matchLabelsInText(text: string, index: Map<string, string>): Set<string> {
+function matchLabelsInText(text: string, index: Map<string, string | string[]>): Set<string> {
   const tokens = normalize(text).split(' ').filter(Boolean);
   const matched = new Set<string>();
   for (let start = 0; start < tokens.length; start++) {
@@ -96,7 +102,11 @@ function matchLabelsInText(text: string, index: Map<string, string>): Set<string
       const phrase = tokens.slice(start, start + len).join(' ');
       const id = index.get(phrase);
       if (id) {
-        matched.add(id);
+        if (Array.isArray(id)) {
+          for (const singleId of id) matched.add(singleId);
+        } else {
+          matched.add(id);
+        }
         break;
       }
     }
@@ -151,7 +161,10 @@ export function resolveEscoOccupation(text: string): ResolvedOccupation | null {
     for (let len = Math.min(MAX_NGRAM_WORDS, tokens.length - start); len >= 1; len--) {
       const phrase = tokens.slice(start, start + len).join(' ');
       const id = occupationLabelIndex.get(phrase);
-      if (id && (!best || len > best.len)) {
+      // occupationLabelIndex never actually holds an array (see its own
+      // comment above) — this guard just narrows the shared Map type back
+      // to a single id for TS.
+      if (id && !Array.isArray(id) && (!best || len > best.len)) {
         best = { id, len };
         break;
       }

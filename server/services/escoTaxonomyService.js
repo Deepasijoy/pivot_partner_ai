@@ -31,15 +31,27 @@ const { _comment: _ignored, ...customAliasesByUri } = customAliasesRaw
 // in depth for hand-edits to the alias file made without a full rebuild.
 const skillIdByUri = new Map(Object.entries(taxonomy.skills).map(([id, s]) => [s.escoUri, id]))
 
+// A phrase's value is either a single URI or an ARRAY of URIs — an array
+// resolves the same matched phrase to multiple distinct ESCO skills at
+// once (e.g. "excel" -> both "use microsoft office" and "use spreadsheets
+// software"), for when one real-world term genuinely maps to more than one
+// ESCO concept that different occupations separately depend on as
+// essential — a plain one-to-one alias would force a choice between them.
+// See esco-custom-aliases.json's own header comment for the concrete case
+// this was built for.
 function resolveCustomAliases(aliasesByUri) {
   const resolved = {}
   const unresolved = []
-  for (const [phrase, uri] of Object.entries(aliasesByUri)) {
-    const id = skillIdByUri.get(uri)
-    if (id) {
-      resolved[phrase] = id
-    } else {
-      unresolved.push(`"${phrase}" -> ${uri}`)
+  for (const [phrase, uriOrUris] of Object.entries(aliasesByUri)) {
+    const uris = Array.isArray(uriOrUris) ? uriOrUris : [uriOrUris]
+    const ids = []
+    for (const uri of uris) {
+      const id = skillIdByUri.get(uri)
+      if (id) ids.push(id)
+      else unresolved.push(`"${phrase}" -> ${uri}`)
+    }
+    if (ids.length > 0) {
+      resolved[phrase] = ids.length === 1 ? ids[0] : ids
     }
   }
   if (unresolved.length > 0) {
@@ -66,7 +78,8 @@ function normalize(value) {
     .trim()
 }
 
-// label-phrase -> id. Built once at module load, in two passes so a
+// label-phrase -> id (or, for a dual-ID custom alias like "excel", id[]).
+// Built once at module load, in two passes so a
 // PREFERRED label always wins a collision over another concept's mere
 // ALT label — confirmed necessary, not just defensive: ESCO's own
 // "database management systems" skill lists bare "SQL" among ~45 alt
@@ -126,7 +139,11 @@ for (const [id, item] of Object.entries(taxonomy.skills)) {
 /**
  * Scans `text` for every ESCO skill (or occupation) label/alias/alt-label
  * that appears verbatim as a phrase, via word-bounded n-gram lookup — never
- * a partial-word or substring match. Returns the set of matched ids.
+ * a partial-word or substring match. Returns the set of matched ids — a
+ * single phrase match can contribute more than one id when it resolves via
+ * a dual-ID custom alias (see resolveCustomAliases() above); occupations
+ * never have custom aliases, so occupationLabelIndex entries are always a
+ * single id.
  */
 function matchLabelsInText(text, index) {
   const tokens = normalize(text).split(' ').filter(Boolean)
@@ -136,7 +153,11 @@ function matchLabelsInText(text, index) {
       const phrase = tokens.slice(start, start + len).join(' ')
       const id = index.get(phrase)
       if (id) {
-        matched.add(id)
+        if (Array.isArray(id)) {
+          for (const singleId of id) matched.add(singleId)
+        } else {
+          matched.add(id)
+        }
         break // longest match at this start position wins; move on
       }
     }

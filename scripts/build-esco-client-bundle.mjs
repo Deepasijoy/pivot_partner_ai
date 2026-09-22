@@ -28,22 +28,25 @@ const aliasesRaw = JSON.parse(readFileSync(CUSTOM_ALIASES, 'utf8'));
 const { _comment, ...aliasesByUri } = aliasesRaw;
 
 // esco-custom-aliases.json pins each alias to a skill's stable ESCO Concept
-// URI (see its own header comment) — resolved to this build's skill:N id
-// here, same as server/services/escoTaxonomyService.js does at server
-// startup, so the client bundle never ships an alias pointing at the wrong
-// skill just because build-esco-taxonomy.mjs ran with a different category
-// filter at some point. Fails loudly rather than silently dropping/
-// mis-resolving a URI that isn't in this taxonomy build.
+// URI, or an ARRAY of them for a dual/multi-ID alias (see its own header
+// comment) — resolved to this build's skill:N id(s) here, same as
+// server/services/escoTaxonomyService.js does at server startup, so the
+// client bundle never ships an alias pointing at the wrong skill just
+// because build-esco-taxonomy.mjs ran with a different category filter at
+// some point. Fails loudly rather than silently dropping/mis-resolving a
+// URI that isn't in this taxonomy build.
 const skillUriToId = new Map(Object.entries(full.skills).map(([id, s]) => [s.escoUri, id]));
 const customAliases = {};
 const unresolvedAliases = [];
-for (const [phrase, uri] of Object.entries(aliasesByUri)) {
-  const id = skillUriToId.get(uri);
-  if (id) {
-    customAliases[phrase] = id;
-  } else {
-    unresolvedAliases.push(`"${phrase}" -> ${uri}`);
+for (const [phrase, uriOrUris] of Object.entries(aliasesByUri)) {
+  const uris = Array.isArray(uriOrUris) ? uriOrUris : [uriOrUris];
+  const ids = [];
+  for (const uri of uris) {
+    const id = skillUriToId.get(uri);
+    if (id) ids.push(id);
+    else unresolvedAliases.push(`"${phrase}" -> ${uri}`);
   }
+  if (ids.length > 0) customAliases[phrase] = ids.length === 1 ? ids[0] : ids;
 }
 if (unresolvedAliases.length > 0) {
   console.error(`ERROR: ${unresolvedAliases.length} alias(es) in ${CUSTOM_ALIASES} point to a URI not present in ${SERVER_TAXONOMY}:`);
