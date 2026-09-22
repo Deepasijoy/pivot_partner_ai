@@ -153,6 +153,15 @@ const LandingPage: React.FC = () => {
     navigate('/app', trimmed ? { state: { initialPrompt: trimmed } } : undefined);
   };
 
+  // The hero's primary CTA is a known, exact-text skill-gap-assessment
+  // request, not a free-typed prompt — hands off a dedicated flag instead
+  // of initialPrompt so App.tsx opens the resume-upload flow directly
+  // (openResumeUpload) rather than depending on the chat's text-matching
+  // (isActionableSkillAnalysisIntent) to recognize this button's own copy.
+  const startWithResumeUpload = () => {
+    navigate('/app', { state: { openResumeUpload: true } });
+  };
+
   const handleHeroSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     startWithPrompt(heroInput);
@@ -301,7 +310,7 @@ const LandingPage: React.FC = () => {
             <div className="mt-8 flex flex-wrap items-center justify-center gap-5">
               <button
                 type="button"
-                onClick={() => startWithPrompt('Get my free skill gap assessment')}
+                onClick={startWithResumeUpload}
                 className="inline-flex items-center gap-2 rounded-md px-6 py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90"
                 style={{ backgroundColor: 'var(--accent-gold)' }}
               >

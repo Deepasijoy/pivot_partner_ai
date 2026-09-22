@@ -58,8 +58,33 @@ const SKILL_ANALYSIS_PATTERNS: RegExp[] = [
   /\b(analyze|analyse|assess|review)\s+my\s+(resume|cv|background|experience|profile)\b/i,
 ];
 
+// The fixed phrases above only catch exact shapes ("find my skill gaps",
+// "assess my skills my resume") — real free-typed messages combine the same
+// underlying concepts in an order/verb none of those phrases predicted, e.g.
+// "Get my free skill gap assessment" (the landing page's own hero CTA copy,
+// which the fixed list above didn't catch — "assessment" isn't "analysis",
+// and there's no leading verb). Rather than adding an unbounded list of
+// exact phrases, these two combinators match on the underlying concept
+// showing up anywhere in the message: "skill(s)" alongside a
+// gap/assess/analyze/review/evaluate word, or "my resume/cv" alongside an
+// analyze/review/check/assess word. "my" is required before resume/cv (not
+// just "resume") so "let's resume the meeting" doesn't combine with an
+// unrelated "review"/"check" elsewhere in the same message. The analy[sz]
+// pattern deliberately requires -e/-es/-ed/-ing/-is right after "analy" so
+// it matches analyze/analyse/analysis and their inflections but not
+// "analyst" or "analytical" — both real job-title/domain words this app's
+// own chat legitimately uses (e.g. "data analyst"), which must never
+// short-circuit into the resume-upload flow.
+const SKILL_WORD = /\bskills?\b/i;
+const SKILL_ANALYSIS_ACTION_WORD = /\b(gaps?|assess(?:ment)?|analy[sz](?:e|es|ed|ing|is)|review(?:ed|ing)?|evaluat(?:e|ion))\b/i;
+const MY_RESUME_OR_CV = /\bmy\s+(?:resume|cv)\b/i;
+const RESUME_ACTION_WORD = /\b(analy[sz](?:e|es|ed|ing|is)|review(?:ed|ing)?|check(?:ed|ing)?|assess(?:ment)?)\b/i;
+
 export function isActionableSkillAnalysisIntent(message: string): boolean {
   const lower = message.trim().toLowerCase();
   if (!lower) return false;
-  return SKILL_ANALYSIS_PATTERNS.some((pattern) => pattern.test(lower));
+  if (SKILL_ANALYSIS_PATTERNS.some((pattern) => pattern.test(lower))) return true;
+  if (SKILL_WORD.test(lower) && SKILL_ANALYSIS_ACTION_WORD.test(lower)) return true;
+  if (MY_RESUME_OR_CV.test(lower) && RESUME_ACTION_WORD.test(lower)) return true;
+  return false;
 }

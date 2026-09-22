@@ -113,7 +113,15 @@ function App() {
   const [focusUploadRequestId, setFocusUploadRequestId] = useState(0)
 
   useEffect(() => {
-    const state = location.state as { initialPrompt?: string } | null
+    const state = location.state as { initialPrompt?: string; openResumeUpload?: boolean } | null
+    // The landing page hero's "Get my free skill gap assessment" CTA hands
+    // off this flag instead of initialPrompt specifically so it never goes
+    // through handleUserPrompt/text-matching — see startSkillGapResumeUpload.
+    if (state?.openResumeUpload && !initialPromptSent.current) {
+      initialPromptSent.current = true
+      startSkillGapResumeUpload('Get my free skill gap assessment')
+      return
+    }
     if (state?.initialPrompt && !initialPromptSent.current) {
       initialPromptSent.current = true
       handleUserPrompt(state.initialPrompt)
@@ -134,6 +142,40 @@ function App() {
   const openResumeUpload = () => {
     goToPillar('career')
     setFocusUploadRequestId((n) => n + 1)
+  }
+
+  // Direct, non-text-matched wiring for every built-in UI element that
+  // represents a skill-gap/resume-analysis request with an exact, known
+  // copy — the sidebar's "Find my skill gaps" quick-start prompt and the
+  // landing page's "Get my free skill gap assessment" hero CTA both
+  // reproduce phrases isActionableSkillAnalysisIntent already matches, so
+  // routing them through handleUserPrompt would make their behavior depend
+  // on that regex correctly catching its own UI copy — a real bug the
+  // "Get my free skill gap assessment" CTA hit (see jobIntentDetection.ts).
+  // Calling openResumeUpload() directly here removes that dependency for
+  // known, exact-text triggers, while still logging the same scripted
+  // exchange handleUserPrompt's skill-analysis branch would have shown, for
+  // chat continuity.
+  const startSkillGapResumeUpload = (userMessageText: string) => {
+    openResumeUpload()
+
+    const userMsg: CopilotMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: userMessageText,
+      timestamp: new Date(),
+    }
+    pushMessage(userMsg)
+
+    setTimeout(() => {
+      const aiMsg: CopilotMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: "Let's take a look — upload your resume and I'll break down your skill gaps.",
+        timestamp: new Date(),
+      }
+      pushMessage(aiMsg)
+    }, 500)
   }
 
   // Stable-ish reference so JobMatcherTab's fetch effect (which lists this
@@ -578,6 +620,7 @@ Your career can travel with you.`,
             onSendPrompt={handleUserPrompt}
             onQuickAction={handleQuickAction}
             onOpenResumeParser={openResumeUpload}
+            onSkillGapQuickStart={() => startSkillGapResumeUpload('Find my skill gaps')}
           />
         </div>
 
@@ -923,6 +966,10 @@ Your career can travel with you.`,
                 onOpenResumeParser={() => {
                   setIsMobileChatOpen(false)
                   openResumeUpload()
+                }}
+                onSkillGapQuickStart={() => {
+                  setIsMobileChatOpen(false)
+                  startSkillGapResumeUpload('Find my skill gaps')
                 }}
               />
             </div>

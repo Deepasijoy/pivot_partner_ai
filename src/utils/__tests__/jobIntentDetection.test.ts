@@ -34,6 +34,26 @@ describe('isActionableSkillAnalysisIntent', () => {
     }
   });
 
+  // Covers the reported miss: the landing page's own hero CTA copy ("Get my
+  // free skill gap assessment") didn't match any fixed phrase in the
+  // original pattern list, so it fell through to a generic Groq round-trip.
+  // These exercise the combinator broadening (skill(s) + a
+  // gap/assess/analyze/review/evaluate word anywhere in the message, or "my
+  // resume/cv" + an analyze/review/check/assess word) rather than a fixed
+  // phrase list.
+  test('matches free-typed combinations, not just fixed phrases', () => {
+    const positives = [
+      'Get my free skill gap assessment',
+      'skill gap assessment',
+      'assess my skills',
+      'review my CV',
+      'what skills am I missing',
+    ];
+    for (const message of positives) {
+      assert.equal(isActionableSkillAnalysisIntent(message), true, `expected a match for: "${message}"`);
+    }
+  });
+
   test('does not match unrelated messages', () => {
     const negatives = [
       '',
@@ -43,6 +63,12 @@ describe('isActionableSkillAnalysisIntent', () => {
       'Help me plan my move',
       "I'm looking for a job",
       'What skills does a data analyst typically need?',
+      // "resume" as a verb (not "my resume") must not combine with an
+      // unrelated review/check/assess word elsewhere in the message.
+      "Can we resume the meeting after lunch?",
+      // "analytical"/"analyst" must not match the analy[sz] combinator —
+      // both are real job-title/domain words this app's own chat uses.
+      'The new manager has strong analytical skills',
     ];
     for (const message of negatives) {
       assert.equal(isActionableSkillAnalysisIntent(message), false, `expected no match for: "${message}"`);

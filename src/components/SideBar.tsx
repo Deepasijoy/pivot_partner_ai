@@ -56,13 +56,20 @@ interface SidebarProps {
   onSendPrompt: (message: string) => void;
   onQuickAction: (action: 'jobs' | 'tax' | 'resume') => void;
   onOpenResumeParser: () => void;
+  // Direct action for the "Find my skill gaps" quick-start prompt below —
+  // it reproduces the exact phrase isActionableSkillAnalysisIntent already
+  // matches, so routing it through onSendPrompt/text-matching would make a
+  // known, exact-text UI trigger depend on a regex catching its own copy.
+  // Calling this directly (see App.tsx's startSkillGapResumeUpload) removes
+  // that dependency entirely.
+  onSkillGapQuickStart: () => void;
 }
 
-const QUICK_START_PROMPTS = [
+const QUICK_START_PROMPTS: { icon: typeof Search; label: string; direct?: 'skill-gap' }[] = [
   { icon: Search, label: 'Find roles for my background' },
   { icon: ArrowLeftRight, label: 'Compare local vs remote vs freelance' },
   { icon: Compass, label: 'Analyze my career options' },
-  { icon: ListChecks, label: 'Find my skill gaps' },
+  { icon: ListChecks, label: 'Find my skill gaps', direct: 'skill-gap' },
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -71,6 +78,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onSendPrompt,
   onQuickAction,
   onOpenResumeParser,
+  onSkillGapQuickStart,
 }) => {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -100,9 +108,13 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleQuickStart = (label: string) => {
+  const handleQuickStart = (prompt: (typeof QUICK_START_PROMPTS)[number]) => {
     if (isLoading) return;
-    onSendPrompt(label);
+    if (prompt.direct === 'skill-gap') {
+      onSkillGapQuickStart();
+      return;
+    }
+    onSendPrompt(prompt.label);
   };
 
   const quickActions = [
@@ -173,7 +185,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     key={prompt.label}
                     type="button"
-                    onClick={() => handleQuickStart(prompt.label)}
+                    onClick={() => handleQuickStart(prompt)}
                     disabled={isLoading}
                     className="flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-left text-sm font-medium transition-all hover:shadow-soft disabled:cursor-not-allowed disabled:opacity-50"
                     style={{ borderColor: 'var(--border-warm)', color: 'var(--text-strong)' }}
