@@ -23,7 +23,13 @@ function getFitColor(score: number): string {
 
 const CareerProfile: React.FC<CareerProfileProps> = ({ profile, jobs, jobSource, jobReason }) => {
   const [topRecommendation] = getCareerRecommendations(profile, { jobs: jobsForCareerGuidance(jobs), limit: 1 });
-  const { coreSkills, transferableSkills } = splitSkillsByTransferability(profile.skills);
+  const { coreSkills, transferableSkills } = splitSkillsByTransferability(
+    profile.skills,
+    profile.likelyRole,
+    profile.industries,
+    profile.lowConfidenceSkillNames,
+    profile.highConfidenceSkillNames
+  );
   const seniority = deriveSeniority(profile.yearsExperience);
   const marketFit = topRecommendation?.matchScore ?? 0;
   const fitColor = getFitColor(marketFit);

@@ -25,6 +25,8 @@ export async function parseResume(file: File): Promise<ResumeProfile> {
   const industries = detectIndustries(text);
   const seniority = detectSeniority(yearsExperience);
   const likelyRole = detectLikelyRole(text);
+  const lowConfidenceSkillNames = computeLowConfidenceSkillNames(text, skills);
+  const highConfidenceSkillNames = computeHighConfidenceSkillNames(text, skills);
 
   return {
     skills,
@@ -33,6 +35,8 @@ export async function parseResume(file: File): Promise<ResumeProfile> {
     industries,
     seniority,
     likelyRole,
+    lowConfidenceSkillNames,
+    highConfidenceSkillNames,
   };
 }
 
@@ -157,27 +161,79 @@ const TITLE_LABEL_PATTERN = /^(?:current\s+)?(?:job\s+)?(?:title|role|position)\
 const EXPERIENCE_SECTION_HEADERS =
   /^(?:professional\s+|work\s+)?experience$|^employment(?:\s+history)?$|^work\s+history$|^career\s+history$/i;
 
-// Section headers where the same label describes something else entirely —
-// a side/personal project's role, not the candidate's own job — and must
-// never be trusted as their professional identity no matter how confident
-// the line itself looks (this is exactly what let a "Role: Full Stack
-// Developer" line inside a "Side Projects" section hijack a BI/finance
-// candidate's likelyRole, and from there their job search query and
-// occupation resolution, in a real, reproduced case).
-const NON_EXPERIENCE_SECTION_HEADERS =
-  /^(?:side|independent|personal|academic|open[\s-]source)\s+projects?$|^projects?$|^education$|^(?:technical\s+)?skills?$|^certifications?$|^publications?$|^awards?(?:\s+(?:&|and)\s+honou?rs?)?$|^references?$|^summary$|^objective$|^profile$|^about(?:\s+me)?$/i;
+// Side/personal project sections specifically — split out from the broader
+// NON_EXPERIENCE_SECTION_HEADERS set below (which it's still part of, via
+// composition) so it can also be recognized on its own by
+// splitOutSideProjectSections() further down, for skill-cluster weighting.
+const SIDE_PROJECT_SECTION_HEADERS = /^(?:side|independent|personal|academic|open[\s-]source)\s+projects?$|^projects?$/i;
 
-// Classifies a line as a recognized section header, or null when it isn't
-// one (ordinary content). Only a handful of common headings are
-// recognized on purpose — an unrecognized heading leaves the current
-// eligibility state unchanged (see detectLikelyRole()) rather than
-// guessing, since a false "non-experience" classification would silently
-// suppress a genuine title label, and a false "experience" classification
-// would reopen exactly the hole this exists to close.
-function isSectionHeaderLine(line: string): 'experience' | 'non-experience' | null {
-  const normalized = line.trim().replace(/:$/, '');
+// Key-Skills/Skills-Summary section headers — also split out on its own
+// (same reason as SIDE_PROJECT_SECTION_HEADERS above) so
+// splitOutKeySkillsSection() further down can recognize it independently,
+// for the opposite purpose: skills stated here are a deliberate self-
+// declaration, higher-confidence evidence than an incidental in-bullet
+// mention, not lower — see jobQueryService.ts's KEY_SKILLS_SKILL_WEIGHT.
+// Broader than a single "Skills" entry on purpose: real resumes use varied
+// wording for the same convention ("Key Skills", "Skills Summary", "Core
+// Competencies", "Areas of Expertise", "Skill Set", "Technical
+// Proficiencies", ...) — validated against this specific variety, not just
+// one phrasing, before being wired into any weighting decision.
+const KEY_SKILLS_SECTION_HEADERS =
+  /^(?:key|core|technical|professional|primary|relevant)?\s*skills?(?:\s*(?:&|and)\s*(?:expertise|competencies))?$|^skills?\s*(?:summary|overview|profile)$|^core\s+competenc(?:y|ies)$|^competenc(?:y|ies)$|^areas?\s+of\s+expertise$|^expertise$|^skill\s*set$|^technical\s+proficienc(?:y|ies)$/i;
+
+// Section headers where a "Title:"/"Role:"/"Position:" label describes
+// something else entirely — a side/personal project's role, not the
+// candidate's own job — and must never be trusted as their professional
+// identity no matter how confident the line itself looks (this is exactly
+// what let a "Role: Full Stack Developer" line inside a "Side Projects"
+// section hijack a BI/finance candidate's likelyRole, and from there their
+// job search query and occupation resolution, in a real, reproduced case).
+const NON_EXPERIENCE_SECTION_HEADERS = new RegExp(
+  `${SIDE_PROJECT_SECTION_HEADERS.source}|${KEY_SKILLS_SECTION_HEADERS.source}|^education$|^certifications?$|^publications?$|^awards?(?:\\s+(?:&|and)\\s+honou?rs?)?$|^references?$|^summary$|^objective$|^profile$|^about(?:\\s+me)?$`,
+  'i'
+);
+
+// A structural, non-vocabulary signal for "this line is very likely SOME
+// section heading, even if we don't recognize which one" — the same pattern
+// skillExtractionService.ts's GENERIC_SECTION_HEADER_LINE_PATTERN already
+// uses, for the same reason: a fixed word list can never cover every
+// resume's actual heading wording ("Publications:", "Volunteer Work:",
+// "Certifications & Licenses:", ...). Deliberately colon-anchored, not just
+// "short and title-case" — a bare company name or job title on its own line
+// ("National Trust Bank", "Senior Credit Operations Officer") is exactly as
+// short/title-cased as a real heading, so anything looser here would wrongly
+// swallow the very title lines detectLikelyRole() exists to find.
+const GENERIC_HEADING_LINE_PATTERN = /^[A-Za-z][A-Za-z /&-]{0,38}:$/;
+
+// Classifies a line as a recognized "experience" header, a recognized
+// "side-project" header, a recognized "key-skills" header (each a
+// NON_EXPERIENCE_SECTION_HEADERS subset, called out on its own so
+// splitOutSideProjectSections()/splitOutKeySkillsSection() below can track
+// them independently — a Skills/Key-Skills/Certifications section is
+// exactly the kind of real, earned-skill evidence the side-project
+// mechanism must NOT down-weight, and a Key-Skills section specifically is
+// exactly what the high-confidence mechanism must isolate), any other
+// recognized "non-experience" header, an unrecognized-but-heading-shaped
+// line, or null (ordinary content). A recognized heading sets eligibility
+// explicitly (true/false) in detectLikelyRole(). An unrecognized heading —
+// real, since only a handful of common phrasings are hardcoded — FAILS
+// CLOSED there: it's treated as non-experience rather than leaving
+// eligibility unchanged, because the cost of missing a genuine title
+// (silently falls through to the line-2 heuristic, today's existing
+// behavior) is far lower than the cost of wrongly trusting a label under a
+// heading we simply didn't recognize (this is the exact original bug this
+// function exists to close). Only a line with NO heading signal at all —
+// ordinary prose, a company name, a bare title — leaves eligibility
+// unchanged, since those are exactly the lines this function must not
+// misfire on (see GENERIC_HEADING_LINE_PATTERN's own comment).
+function isSectionHeaderLine(line: string): 'experience' | 'non-experience' | 'side-project' | 'key-skills' | null {
+  const trimmed = line.trim();
+  const normalized = trimmed.replace(/:$/, '');
   if (EXPERIENCE_SECTION_HEADERS.test(normalized)) return 'experience';
+  if (SIDE_PROJECT_SECTION_HEADERS.test(normalized)) return 'side-project';
+  if (KEY_SKILLS_SECTION_HEADERS.test(normalized)) return 'key-skills';
   if (NON_EXPERIENCE_SECTION_HEADERS.test(normalized)) return 'non-experience';
+  if (GENERIC_HEADING_LINE_PATTERN.test(trimmed)) return 'non-experience';
   return null;
 }
 
@@ -212,7 +268,7 @@ function detectLikelyRole(text: string): string | undefined {
   for (const line of lines) {
     const section = isSectionHeaderLine(line);
     if (section === 'experience') eligible = true;
-    else if (section === 'non-experience') eligible = false;
+    else if (section === 'non-experience' || section === 'side-project' || section === 'key-skills') eligible = false;
 
     if (!eligible) continue;
     const match = line.match(TITLE_LABEL_PATTERN);
@@ -229,6 +285,95 @@ function detectLikelyRole(text: string): string | undefined {
   }
 
   return undefined;
+}
+
+// Reuses the exact same section-boundary tracking as detectLikelyRole()'s
+// eligibility loop — scoped to just "am I inside a recognized Side/
+// Personal/Academic/Independent Projects section" — so the two mechanisms
+// can never disagree on what counts as one. Only side-project membership is
+// tracked (not the full experience/non-experience state machine): a Skills
+// or Certifications section is exactly the kind of real, earned-skill
+// evidence this must NOT exclude, so nothing but a recognized side-project
+// header (or leaving one via any other recognized header) changes state.
+function splitOutSideProjectSections(text: string): { mainText: string } {
+  const lines = text.split('\n');
+  const mainLines: string[] = [];
+  let inSideProject = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed) {
+      const section = isSectionHeaderLine(line);
+      if (section === 'side-project') inSideProject = true;
+      else if (section === 'experience' || section === 'non-experience' || section === 'key-skills') inSideProject = false;
+    }
+    if (!inSideProject) mainLines.push(line);
+  }
+
+  return { mainText: mainLines.join('\n') };
+}
+
+// Same section-boundary tracking as splitOutSideProjectSections() above,
+// scoped instead to "am I inside a recognized Key-Skills/Skills-Summary
+// section" — isolates just that section's own text so
+// computeHighConfidenceSkillNames() below can re-run skill detection on it
+// alone, the same technique computeLowConfidenceSkillNames() uses for side
+// projects.
+function splitOutKeySkillsSection(text: string): { keySkillsText: string } {
+  const lines = text.split('\n');
+  const keySkillsLines: string[] = [];
+  let inKeySkills = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed) {
+      const section = isSectionHeaderLine(line);
+      if (section === 'key-skills') inKeySkills = true;
+      else if (section === 'experience' || section === 'non-experience' || section === 'side-project') inKeySkills = false;
+    }
+    if (inKeySkills) keySkillsLines.push(line);
+  }
+
+  return { keySkillsText: keySkillsLines.join('\n') };
+}
+
+// Names (lowercased) of skills whose textual evidence includes a dedicated
+// Key-Skills/Skills-Summary section — a deliberate self-declaration, and so
+// HIGHER-confidence evidence than an incidental in-bullet mention, the
+// mirror image of computeLowConfidenceSkillNames() above.
+// jobQueryService.ts's findDominantSkillClusters() uses this to boost (see
+// its own KEY_SKILLS_SKILL_WEIGHT) these specifically, so a candidate's
+// self-declared focus skills carry more weight in cluster-matching than a
+// skill mentioned once in passing.
+function computeHighConfidenceSkillNames(text: string, allSkills: Skill[]): string[] {
+  const { keySkillsText } = splitOutKeySkillsSection(text);
+  if (!keySkillsText.trim()) return [];
+  const keySkillsOnlyNames = new Set(detectSkills(keySkillsText).map((skill) => skill.name.toLowerCase()));
+  return allSkills.map((skill) => skill.name.toLowerCase()).filter((name) => keySkillsOnlyNames.has(name));
+}
+
+// Names (lowercased) of skills whose ONLY textual evidence is inside a
+// side/personal project section — a genuine skill, but weaker evidence
+// than one stated in Professional Experience, a dedicated Skills section,
+// or Certifications. jobQueryService.ts's findDominantSkillClusters() uses
+// this to down-weight (never zero out) these specifically, so an
+// incidental side-project tool mention can't outvote a candidate's actual
+// professional or credentialed skillset when deriving a job-search query —
+// see its own SIDE_PROJECT_SKILL_WEIGHT for why this matters: a real,
+// reproduced case had a side project mentioning 4 different web
+// technologies tie (and in one further case, even beat) a candidate's
+// actual Power BI/SQL/Python/data-analytics-certificate skillset for
+// cluster-matching purposes.
+//
+// Determined by re-running the SAME skill detector on only the non-side-
+// project portion of the text: anything detected there is full-confidence
+// (even if it ALSO happens to appear in a side project — genuinely used
+// professionally too, so it should count fully); anything that only shows
+// up once side-project text is included is side-project-only.
+function computeLowConfidenceSkillNames(text: string, allSkills: Skill[]): string[] {
+  const { mainText } = splitOutSideProjectSections(text);
+  const mainOnlyNames = new Set(detectSkills(mainText).map((skill) => skill.name.toLowerCase()));
+  return allSkills.map((skill) => skill.name.toLowerCase()).filter((name) => !mainOnlyNames.has(name));
 }
 
 function detectSeniority(yearsExperience: number): string {

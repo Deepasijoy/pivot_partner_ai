@@ -1,7 +1,7 @@
 import type { ResumeProfile, Skill, JobOpportunity, CareerRecommendation } from '../types';
 import { mockRemoteJobs, mockFreelanceGigs } from './mockData';
-import { classifyOccupationCompatibility, type OccupationCompatibilityResult } from './occupationMatchingService';
-import { getEscoSkillById } from './escoTaxonomyClient';
+import { classifyOccupationCompatibility, resolveCandidateOccupation, type OccupationCompatibilityResult } from './occupationMatchingService';
+import { getEscoSkillById, findEscoSkillsInText } from './escoTaxonomyClient';
 
 // ---------------------------------------------------------------------------
 // Scoring weights — transparent, deterministic, no random inputs.
@@ -74,7 +74,63 @@ export function deriveSeniority(yearsExperience: number): string {
   return 'Entry-level';
 }
 
-export function splitSkillsByTransferability(skills: Skill[]): { coreSkills: Skill[]; transferableSkills: Skill[] } {
+// A skill's own `category` ('technical'/'business') is a fixed, universal
+// label describing what KIND of skill it is in general (see mockData.ts/
+// escoTaxonomyClient.ts) — not whether it's core to THIS candidate's actual
+// occupation. It happens to line up for a software engineer (whose core
+// tools are almost all tagged 'technical'), but is exactly inverted for,
+// say, a banking/credit-operations professional now targeting Data Analyst
+// roles: their real professional tools (Excel, MIS Reporting, Financial
+// Analysis, Credit Risk Analysis) are tagged 'business' ("Transferable"),
+// while an incidental side-project's tech-stack mention (TypeScript, React)
+// is tagged 'technical' ("Core") — a real, reported case. Resolves via the
+// same ISCO-occupation mechanism scoreJob() already uses instead: "Core" =
+// matches the candidate's actual resolved occupation's essential skills.
+//
+// A plain skill.escoId comparison isn't enough on its own: detectSkills()
+// can return two separate Skill entries for the same real-world skill — a
+// legacy mockData-taxonomy one with no escoId (e.g. "Excel") and an
+// additive ESCO one with its own, differently-labeled escoId (e.g. "use
+// microsoft office") — so a legacy entry with no escoId is re-resolved via
+// findEscoSkillsInText() on its own name, reusing the exact same
+// label/alias matching used everywhere else, rather than silently landing
+// in "Transferable" just for lacking an escoId of its own.
+//
+// Falls back to the old technical/business split only when no ESCO
+// occupation resolves at all for this candidate — strictly better than
+// showing nothing, and matches this function's previous behavior for a
+// genuinely unrecognized profile.
+function effectiveSkillIds(skill: Skill): string[] {
+  if (skill.escoId) return [skill.escoId];
+  return findEscoSkillsInText(skill.name)
+    .map((s) => s.escoId)
+    .filter((id): id is string => Boolean(id));
+}
+
+export function splitSkillsByTransferability(
+  skills: Skill[],
+  likelyRole?: string,
+  industries?: string[],
+  lowConfidenceSkillNames?: string[],
+  highConfidenceSkillNames?: string[]
+): { coreSkills: Skill[]; transferableSkills: Skill[] } {
+  const occupation = resolveCandidateOccupation(likelyRole, skills, industries, lowConfidenceSkillNames, highConfidenceSkillNames);
+  if (occupation) {
+    const essentialIds = new Set(occupation.essentialSkillIds);
+    const isCore = (skill: Skill) => effectiveSkillIds(skill).some((id) => essentialIds.has(id));
+    const resolvedCoreSkills = skills.filter(isCore);
+    // An occupation resolving but explaining NONE of the candidate's actual
+    // skills is a strong sign the resolution itself picked the wrong
+    // occupation (e.g. a stale past job title rather than the role being
+    // targeted) rather than that the candidate genuinely has zero core
+    // skills — an empty "Core Skills" section is a worse fallback than the
+    // old technical/business split, so treat it the same as no occupation
+    // resolving at all below, rather than returning it as-is.
+    if (resolvedCoreSkills.length > 0) {
+      return { coreSkills: resolvedCoreSkills, transferableSkills: skills.filter((skill) => !isCore(skill)) };
+    }
+  }
+
   return {
     coreSkills: skills.filter((skill) => skill.category === 'technical'),
     transferableSkills: skills.filter((skill) => skill.category === 'business'),
@@ -136,7 +192,9 @@ export function scoreJob(profile: ResumeProfile, job: JobOpportunity): JobScore 
     profile.industries,
     job.title,
     job.description,
-    profile.skills
+    profile.skills,
+    profile.lowConfidenceSkillNames,
+    profile.highConfidenceSkillNames
   );
 
   const requiredSkills = effectiveRequiredSkills(job, occupationCompatibility);

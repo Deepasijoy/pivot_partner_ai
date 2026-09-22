@@ -44,6 +44,30 @@ export interface ResumeProfile {
   seniority?: string;
   transferableSkills?: Skill[];
   careerPaths?: SuggestedCareerPath[];
+  // Lowercased names of skills whose only textual evidence is inside a
+  // Side/Personal/Academic/Independent Projects section (see
+  // resumeParserService.ts) — a genuine skill, but weaker evidence than one
+  // stated in Professional Experience, a dedicated Skills section, or
+  // Certifications. jobQueryService.ts's findDominantSkillClusters() uses
+  // this to down-weight (never zero out) an incidental side-project tool
+  // mention so it can't outvote a candidate's actual professional or
+  // credentialed skillset when deriving a job-search query. Optional and
+  // additive: absent entirely means "no section information available",
+  // which every consumer treats as full weight for every skill — today's
+  // exact prior behavior, never a regression for a profile that doesn't set it.
+  lowConfidenceSkillNames?: string[];
+  // Lowercased names of skills whose textual evidence includes a dedicated
+  // Key-Skills/Skills-Summary section (see resumeParserService.ts) — a
+  // deliberate self-declaration, so HIGHER-confidence evidence than an
+  // incidental in-bullet mention, the mirror image of
+  // lowConfidenceSkillNames above. jobQueryService.ts's
+  // findDominantSkillClusters() uses this to boost these specifically.
+  // Takes precedence over lowConfidenceSkillNames when a skill is in both
+  // (e.g. self-declared in Key Skills AND mentioned once in a side
+  // project) — the deliberate self-declaration wins, not an average.
+  // Optional and additive, same backward-compatibility guarantee as
+  // lowConfidenceSkillNames.
+  highConfidenceSkillNames?: string[];
 }
 
 export interface SkillGap {

@@ -143,13 +143,46 @@ function familyRelation(iscoA: string, iscoB: string): 'same' | 'adjacent' | 'un
  * conflict, but occupation resolution can still benefit from it. Returns
  * null when nothing resolves — a genuinely unrecognized or absent
  * occupation is never guessed at.
+ *
+ * `lowConfidenceSkillNames` (ResumeProfile.lowConfidenceSkillNames — names
+ * of skills whose only textual evidence is a side/personal project
+ * mention) is optional and forwarded straight through to deriveJobQuery(),
+ * for the identical reason it exists there: without it, a side project's
+ * incidental tech-stack mentions can outvote a candidate's actual
+ * professional/credentialed skillset in the skill-cluster fallback this
+ * function uses, resolving the WRONG occupation even after the job-search
+ * query itself was already fixed to account for it.
+ *
+ * BACKLOG (known, accepted gap — not a bug): callers that turn a resolved
+ * occupation's essentialSkillIds into a "core skills" set (e.g.
+ * recommendationService.ts's splitSkillsByTransferability) can still miss
+ * skills a candidate obviously has that ESCO itself just doesn't associate
+ * with this occupation at all — confirmed for "data analyst" (occ:2014),
+ * whose ESCO essential AND optional skill lists both omit SQL and Python
+ * entirely (verified directly against the raw occupation-skill-relations
+ * data), even though they're colloquially core to the role. This is a
+ * genuine ESCO taxonomy granularity limitation, not something a code fix
+ * here can correct by itself. Revisit by supplementing essential-skill
+ * occupation matching with a broader dominant-skill-cluster cross-check
+ * (jobQueryService.ts's ROLE_CLUSTERS already encodes exactly this kind of
+ * "SQL/Python/Power BI => data analytics" association) for whatever a
+ * resolved occupation's own essential/optional lists don't cover.
  */
 export function resolveCandidateOccupation(
   likelyRole: string | undefined,
   skills: Skill[] | undefined,
-  industries: string[] | undefined
+  industries: string[] | undefined,
+  lowConfidenceSkillNames?: string[],
+  highConfidenceSkillNames?: string[]
 ): ResolvedOccupation | null {
-  const baseProfile = { skills: skills ?? [], experience: '', yearsExperience: 0, industries: industries ?? [] };
+  const baseProfile = {
+    skills: skills ?? [],
+    experience: '',
+    yearsExperience: 0,
+    industries: industries ?? [],
+    lowConfidenceSkillNames,
+    highConfidenceSkillNames,
+  };
 
   const query = deriveJobQuery({ ...baseProfile, likelyRole });
   if (query.source !== 'seniority_fallback') {
@@ -176,19 +209,32 @@ function resolveJobOccupation(jobTitle: string, jobDescription: string | undefin
  * result, including when neither side resolves to a known ESCO occupation
  * at all ('unknown', no adjustment).
  *
- * Signature intentionally unchanged from the previous keyword-based
- * implementation (same 5 positional args, same order) so
- * recommendationService.ts's and matchingService.ts's call sites needed no
- * changes beyond this file.
+ * The original 5 positional args (candidateLikelyRole, candidateIndustries,
+ * jobTitle, jobDescription, candidateSkills) are unchanged and in the same
+ * order, so no existing call passing exactly those still needs to change.
+ * candidateLowConfidenceSkillNames/candidateHighConfidenceSkillNames are
+ * new, appended, optional 6th/7th args — ResumeProfile's own
+ * lowConfidenceSkillNames/highConfidenceSkillNames, forwarded straight
+ * through to resolveCandidateOccupation() so this scoring path can't
+ * disagree with the (now side-project- and Key-Skills-aware) job-search
+ * query about which occupation a candidate actually resolves to.
  */
 export function classifyOccupationCompatibility(
   candidateLikelyRole: string | undefined,
   candidateIndustries: string[] | undefined,
   jobTitle: string,
   jobDescription: string | undefined,
-  candidateSkills?: Skill[]
+  candidateSkills?: Skill[],
+  candidateLowConfidenceSkillNames?: string[],
+  candidateHighConfidenceSkillNames?: string[]
 ): OccupationCompatibilityResult {
-  const candidateOccupation = resolveCandidateOccupation(candidateLikelyRole, candidateSkills, candidateIndustries);
+  const candidateOccupation = resolveCandidateOccupation(
+    candidateLikelyRole,
+    candidateSkills,
+    candidateIndustries,
+    candidateLowConfidenceSkillNames,
+    candidateHighConfidenceSkillNames
+  );
   if (!candidateOccupation) {
     return {
       category: 'unknown',

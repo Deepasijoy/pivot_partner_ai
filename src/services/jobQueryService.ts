@@ -48,7 +48,18 @@ const ROLE_CLUSTERS: RoleCluster[] = [
   },
   {
     id: 'data_analytics',
-    skillNames: ['Python', 'SQL', 'Data Analysis', 'Power BI', 'Tableau', 'Machine Learning', 'TensorFlow', 'Data-Driven Decision Making'],
+    // 'Excel' is also in the 'finance' cluster below — the first skill name
+    // shared across two clusters in this table (every other entry is
+    // disjoint). Added here deliberately, not by oversight: confirmed
+    // against ESCO's own occupation-skill-relations data that "use
+    // spreadsheets software" is a real (optional, not essential) skill of
+    // ESCO's "data analyst" occupation (occ:2014) — unlike SQL/Python,
+    // which are absent from that occupation's essential AND optional lists
+    // entirely and remain a documented backlog item (see
+    // occupationMatchingService.ts's resolveCandidateOccupation() BACKLOG
+    // comment), this addition has genuine ESCO corroboration behind it,
+    // not just a hand-curated guess.
+    skillNames: ['Python', 'SQL', 'Data Analysis', 'Power BI', 'Tableau', 'Machine Learning', 'TensorFlow', 'Data-Driven Decision Making', 'Excel'],
     queryTerms: ['Data Analyst', 'Business Intelligence Analyst', 'Data Scientist'],
   },
   {
@@ -110,38 +121,113 @@ const INDUSTRY_ROLE_HINTS: Record<string, string[]> = {
   Consulting: ['Business Analyst', 'Management Consultant', 'Operations Manager'],
 };
 
-function countMatchingSkills(cluster: RoleCluster, skillNames: Set<string>): number {
-  return cluster.skillNames.filter((name) => skillNames.has(name.toLowerCase())).length;
+// A side/personal/academic project mention is still real evidence of a
+// skill — it's down-weighted, never zeroed out — but at a fraction of a
+// Professional-Experience or certification-backed skill's vote, so an
+// incidental one-off tool mention can't outvote a candidate's actual,
+// sustained or credentialed skillset. This closed a real, reproduced case:
+// a side project mentioning 4 different web technologies previously tied
+// (and in one further tested case, even beat) a candidate's real Power
+// BI/SQL/Python/data-analytics-certificate skillset for cluster-matching
+// purposes, which was the direct cause of "Data Analyst" never winning the
+// job-search query for a banking/credit-ops candidate actively targeting
+// data-analyst roles.
+const SIDE_PROJECT_SKILL_WEIGHT = 0.4;
+
+// A skill self-declared in a dedicated Key-Skills/Skills-Summary section is
+// a more deliberate signal than an incidental in-bullet mention — the
+// candidate chose to headline it — so it counts for MORE than an ordinary
+// mention, the mirror image of SIDE_PROJECT_SKILL_WEIGHT. 1.5x: large
+// enough to meaningfully separate a cluster whose skills are genuinely
+// headlined from one that only shows up incidentally, without being so
+// large that a single self-declared skill can single-handedly overwhelm
+// several genuine, differently-sourced mentions elsewhere (which would
+// make the signal too brittle to one placement choice). Stress-tested
+// against both a focused and a "kitchen sink" (broad, non-discriminating)
+// Key Skills section before being wired in here — see the module's own
+// test coverage / the sprint report for the real computed numbers: it
+// reliably breaks a tie when the section is focused, and is a proven no-op
+// (never a regression) when it isn't, since boosting every cluster's votes
+// by the same factor can't change their relative ordering.
+const KEY_SKILLS_SKILL_WEIGHT = 1.5;
+
+// A skill can be BOTH self-declared in Key Skills AND mentioned once in a
+// side project — e.g. genuinely used professionally and also in a personal
+// project. Key-Skills membership wins outright in that case (checked
+// first, and short-circuits before the side-project check even runs): a
+// deliberate self-declaration is at least as strong a signal as an
+// incidental mention, never weaker, so the discount never applies once
+// self-declaration is confirmed — this is an override, not an average.
+function skillWeight(
+  name: string,
+  lowConfidenceSkillNames: Set<string> | undefined,
+  highConfidenceSkillNames: Set<string> | undefined
+): number {
+  const normalized = name.toLowerCase();
+  if (highConfidenceSkillNames?.has(normalized)) return KEY_SKILLS_SKILL_WEIGHT;
+  if (lowConfidenceSkillNames?.has(normalized)) return SIDE_PROJECT_SKILL_WEIGHT;
+  return 1;
+}
+
+function countMatchingSkills(
+  cluster: RoleCluster,
+  skillNames: Set<string>,
+  lowConfidenceSkillNames: Set<string> | undefined,
+  highConfidenceSkillNames: Set<string> | undefined
+): number {
+  let total = 0;
+  for (const name of cluster.skillNames) {
+    const normalized = name.toLowerCase();
+    if (skillNames.has(normalized)) total += skillWeight(normalized, lowConfidenceSkillNames, highConfidenceSkillNames);
+  }
+  return total;
 }
 
 export interface DominantSkillClusterMatch {
-  // Every cluster tied for the top match count — more than one entry means
-  // a genuine tie (deriveJobQuery() below tie-breaks by industry alignment
-  // or definition order; a caller that only wants a CLEAR, unambiguous
-  // signal — see occupationMatchingService.ts's resolveCandidateDomain —
-  // should treat length > 1 as "no clear winner").
+  // Every cluster tied for the top (weighted) match count — more than one
+  // entry means a genuine tie (deriveJobQuery() below tie-breaks by
+  // industry alignment or definition order; a caller that only wants a
+  // CLEAR, unambiguous signal should treat length > 1 as "no clear
+  // winner").
   clusters: RoleCluster[];
-  // Shared match count across every cluster in `clusters` (0 when none
-  // matched at all).
+  // Shared weighted match count across every cluster in `clusters` (0 when
+  // none matched at all). A fractional number whenever a side-project-only
+  // or Key-Skills-section skill contributed to it — see
+  // SIDE_PROJECT_SKILL_WEIGHT / KEY_SKILLS_SKILL_WEIGHT.
   matchCount: number;
 }
 
 // Finds the skill cluster(s) (ROLE_CLUSTERS above) whose skillNames overlap
-// most with the given skills — the same "which occupation do these skills
-// actually point to" computation deriveJobQuery() already does for query
-// construction, extracted so occupationMatchingService.ts's
-// resolveCandidateDomain() can reuse the identical logic (and the identical
-// cluster definitions) for candidate-domain resolution, rather than
-// maintaining a second, independent copy that could drift out of sync.
-export function findDominantSkillClusters(skills: { name: string }[]): DominantSkillClusterMatch {
+// most with the given skills, by WEIGHTED count — the same "which
+// occupation do these skills actually point to" computation deriveJobQuery()
+// already does for query construction. `lowConfidenceSkillNames` /
+// `highConfidenceSkillNames` (resumeParserService.ts's
+// ResumeProfile.lowConfidenceSkillNames / highConfidenceSkillNames) are
+// both optional and additive: omitting either (or both) weights every
+// affected skill at the plain default of 1, exactly today's prior
+// (unweighted) behavior, so a caller with no section information (e.g.
+// scoring a job listing's own required skills, which have no "section"
+// concept at all) is unaffected.
+export function findDominantSkillClusters(
+  skills: { name: string }[],
+  lowConfidenceSkillNames?: string[],
+  highConfidenceSkillNames?: string[]
+): DominantSkillClusterMatch {
   const skillNames = new Set(skills.map((skill) => skill.name.toLowerCase()));
   if (skillNames.size === 0) return { clusters: [], matchCount: 0 };
+
+  const lowConfidenceSet = lowConfidenceSkillNames
+    ? new Set(lowConfidenceSkillNames.map((name) => name.toLowerCase()))
+    : undefined;
+  const highConfidenceSet = highConfidenceSkillNames
+    ? new Set(highConfidenceSkillNames.map((name) => name.toLowerCase()))
+    : undefined;
 
   let bestClusters: RoleCluster[] = [];
   let bestCount = 0;
 
   for (const cluster of ROLE_CLUSTERS) {
-    const count = countMatchingSkills(cluster, skillNames);
+    const count = countMatchingSkills(cluster, skillNames, lowConfidenceSet, highConfidenceSet);
     if (count > bestCount) {
       bestCount = count;
       bestClusters = [cluster];
@@ -173,10 +259,10 @@ function clusterMatchingRoleText(role: string): RoleCluster | undefined {
   );
 }
 
-// A skill-cluster match this small (a single incidental shared skill) isn't
-// a strong enough signal to override an explicitly stated role — only a
-// real, multi-skill cluster match can do that. See deriveJobQuery()'s use
-// of this below.
+// A (weighted) skill-cluster match this small (a single incidental shared
+// skill) isn't a strong enough signal to override an explicitly stated,
+// off-catalog role — only a real, multi-skill cluster match can do that.
+// See deriveJobQuery()'s use of this below.
 const MIN_CONFLICTING_SKILL_MATCH = 2;
 
 function isSeniorLevel(seniority: string | undefined): boolean {
@@ -192,16 +278,23 @@ function applySeniorityModifier(term: string, seniority: string | undefined): st
 
 /**
  * Derives job-search terms for a resume profile, in priority order:
- * 1. profile.likelyRole, if the parser/AI already identified one AND it
- *    doesn't flatly contradict a decisively-matched skill cluster (e.g. a
- *    resume whose only stated "role" text turns out to name an unrelated
- *    job family, while its actual skills are overwhelmingly a different,
- *    clearly-matched cluster) — see MIN_CONFLICTING_SKILL_MATCH. A merely
- *    absent or weak skill signal never overrides an explicit stated role;
- *    this is a narrow safety net for when likelyRole itself turns out to be
- *    unreliable, not a general preference for skills over stated roles.
- * 2. The dominant skill cluster (most matching skills), tie-broken by
- *    industry alignment.
+ * 1. profile.likelyRole, if the parser/AI already identified one, UNLESS
+ *    it's "off-catalog" (its own text doesn't name any ROLE_CLUSTERS job
+ *    family at all — see clusterMatchingRoleText()) AND a decisive
+ *    (weighted) skill-cluster match points somewhere concrete — see
+ *    MIN_CONFLICTING_SKILL_MATCH. An ON-catalog stated role (its text
+ *    itself names a real cluster, e.g. "Data Analyst" or "Full Stack
+ *    Developer") is trusted OUTRIGHT here, never re-litigated against the
+ *    skill-cluster count: re-litigating that case is exactly what caused a
+ *    real, reproduced regression — an explicit, correct "Data Analyst"
+ *    stated role lost to a side project's incidental tech-stack mentions
+ *    winning the raw cluster count. Only a genuinely off-catalog role (one
+ *    that doesn't map to any cluster's own vocabulary, e.g. a stale past
+ *    job title like "Senior Credit Operations Officer") is checked against
+ *    the skill evidence at all; a merely absent or weak skill signal still
+ *    never overrides it in that case either.
+ * 2. The dominant (weighted) skill cluster, tie-broken by industry
+ *    alignment — see findDominantSkillClusters()'s skill-weighting.
  * 3. An industry-only hint, if no skill cluster matched but an industry did.
  * 4. A generic seniority-based fallback — never a fixed literal title.
  * Seniority is applied as a "Senior " prefix modifier on the primary term
@@ -209,24 +302,33 @@ function applySeniorityModifier(term: string, seniority: string | undefined): st
  */
 export function deriveJobQuery(profile: ResumeProfile): JobQueryResult {
   const industries = profile.industries ?? [];
-  const { clusters: bestClusters, matchCount: bestCount } = findDominantSkillClusters(profile.skills);
+  const { clusters: bestClusters, matchCount: bestCount } = findDominantSkillClusters(
+    profile.skills,
+    profile.lowConfidenceSkillNames,
+    profile.highConfidenceSkillNames
+  );
 
-  if (profile.likelyRole && profile.likelyRole.trim()) {
-    const role = profile.likelyRole.trim();
+  const role = profile.likelyRole?.trim();
+  if (role) {
     const roleCluster = clusterMatchingRoleText(role);
-    const conflictsWithSkills =
-      bestCount >= MIN_CONFLICTING_SKILL_MATCH && roleCluster !== undefined && !bestClusters.includes(roleCluster);
+    // Only an off-catalog role is even eligible to be overridden — see this
+    // function's own doc comment for why an on-catalog one never is.
+    const outweighedByDecisiveSkillMatch = roleCluster === undefined && bestCount >= MIN_CONFLICTING_SKILL_MATCH;
 
-    if (!conflictsWithSkills) {
+    if (!outweighedByDecisiveSkillMatch) {
       return {
         primaryQuery: role,
         alternateQueries: [],
         source: 'likely_role',
-        reasoning: `Used profile.likelyRole ("${role}") directly — the strongest available signal.`,
+        reasoning:
+          roleCluster !== undefined
+            ? `Used profile.likelyRole ("${role}") directly — it names a recognized "${roleCluster.id}" job family, trusted outright regardless of raw skill-cluster counts.`
+            : `Used profile.likelyRole ("${role}") directly — the strongest available signal.`,
       };
     }
-    // Falls through to the skill-cluster logic below: `role` names a
-    // different job family than the ${bestCount} matching skills point to.
+    // Falls through to the skill-cluster logic below: `role` doesn't map to
+    // any known job family, and ${bestCount} weighted skill point(s) point
+    // somewhere concrete instead.
   }
 
   if (bestCount > 0) {
@@ -241,9 +343,9 @@ export function deriveJobQuery(profile: ResumeProfile): JobQueryResult {
       alternateQueries: rest,
       source: 'skill_cluster',
       reasoning:
-        `Matched ${bestCount} skill(s) to the "${chosen.id}" cluster` +
+        `Matched ${bestCount} weighted skill point(s) to the "${chosen.id}" cluster` +
         (industryMatch ? ` (tie-broken by industry match)` : bestClusters.length > 1 ? ` (tie-broken by definition order)` : '') +
-        (profile.likelyRole?.trim() ? ` — overrides stated role "${profile.likelyRole.trim()}", which named a conflicting job family` : '') +
+        (role ? ` — outweighs stated role "${role}", which doesn't map to any known job family` : '') +
         `.`,
     };
   }
