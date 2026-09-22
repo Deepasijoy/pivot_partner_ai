@@ -550,6 +550,7 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
               onAnalyzeSkillGaps={scrollToSkillAnalysis}
               onExploreRemote={handleExploreRemote}
               destinationCountryName={resolvedLocation?.countryName}
+              isSampleProfile={isSampleProfile}
             />
           </section>
 
