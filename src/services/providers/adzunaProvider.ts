@@ -6,6 +6,7 @@
 // refactor that risks destabilizing it.
 
 import { fetchWithRetry, FetchAbortError } from '../../utils/fetchWithRetry';
+import { JOB_FETCH_TIMEOUT_MS } from './jobFetchTimeout';
 import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchResult } from './types';
 
 // Optional-chained so this module can also be imported under plain Node
@@ -14,10 +15,9 @@ import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchRe
 // under the real Vite-built app, where import.meta.env is always present.
 const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
 
-// Configurable so a slow environment can raise it without a code change;
-// short enough that one hung request can never stall the whole aggregated
-// search (see jobAggregatorService.ts's Promise.allSettled).
-const FETCH_TIMEOUT_MS = Number(import.meta.env?.VITE_JOB_FETCH_TIMEOUT_MS) || 10_000;
+// This provider goes through this app's own backend (/api/jobs, see the
+// module comment above) — see jobFetchTimeout.ts for why the shared
+// default needs to be cold-start-aware specifically because of that.
 
 // Adzuna's own documented country coverage — deliberately provider-local
 // (moved out of locationService.ts, which must stay a global, provider-
@@ -104,7 +104,7 @@ async function search(params: ProviderSearchParams): Promise<ProviderSearchResul
     }
 
     const response = await fetchWithRetry(`${API_URL}/api/jobs?${query.toString()}`, {
-      timeoutMs: params.timeoutMs ?? FETCH_TIMEOUT_MS,
+      timeoutMs: params.timeoutMs ?? JOB_FETCH_TIMEOUT_MS,
       signal: params.signal,
     });
     if (!response.ok) {

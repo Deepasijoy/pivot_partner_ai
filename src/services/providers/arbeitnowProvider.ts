@@ -11,11 +11,15 @@
 
 import { cityOrRegionMatchesLocationText } from './geoMatch';
 import { fetchWithRetry, FetchAbortError } from '../../utils/fetchWithRetry';
+import { JOB_FETCH_TIMEOUT_MS } from './jobFetchTimeout';
 import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchResult } from './types';
 
 const API_URL = 'https://www.arbeitnow.com/api/job-board-api';
 
-const FETCH_TIMEOUT_MS = Number(import.meta.env?.VITE_JOB_FETCH_TIMEOUT_MS) || 10_000;
+// Called directly from the browser (no backend hop), so this provider
+// itself has no cold-start exposure — shares jobFetchTimeout.ts's constant
+// anyway for one consistent, single-source-of-truth timeout across every
+// provider rather than a special-cased shorter value for just this one.
 
 // Exported only so mapArbeitnowJob below is unit-testable directly, without
 // mocking the network call in search().
@@ -105,7 +109,7 @@ function isRelevant(job: ArbeitnowJob, what: string): boolean {
 async function search(params: ProviderSearchParams): Promise<ProviderSearchResult> {
   try {
     const response = await fetchWithRetry(`${API_URL}?page=1`, {
-      timeoutMs: params.timeoutMs ?? FETCH_TIMEOUT_MS,
+      timeoutMs: params.timeoutMs ?? JOB_FETCH_TIMEOUT_MS,
       signal: params.signal,
     });
     if (!response.ok) {

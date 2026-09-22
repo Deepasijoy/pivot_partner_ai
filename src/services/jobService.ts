@@ -3,11 +3,11 @@ import { mockRemoteJobs } from './mockData'
 import { detectSkills } from './skillExtractionService'
 import { fetchWithRetry } from '../utils/fetchWithRetry'
 import { formatSalary } from './salaryFormatting'
+import { JOB_FETCH_TIMEOUT_MS } from './providers/jobFetchTimeout'
 
 // Optional-chained so this module can also be imported under plain Node
 // (tests) without throwing at module-load time — see providers/adzunaProvider.ts.
 const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:3000'
-const FETCH_TIMEOUT_MS = Number(import.meta.env?.VITE_JOB_FETCH_TIMEOUT_MS) || 10_000
 
 interface AdzunaJob {
   id: string | number
@@ -141,7 +141,7 @@ export async function loadJobOpportunities({
     }
 
     const response = await fetchWithRetry(`${API_URL}/api/jobs?${params.toString()}`, {
-      timeoutMs: FETCH_TIMEOUT_MS,
+      timeoutMs: JOB_FETCH_TIMEOUT_MS,
     })
 
     if (!response.ok) {
