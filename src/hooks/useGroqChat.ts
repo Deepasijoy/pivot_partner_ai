@@ -51,10 +51,20 @@ export function useGroqChat(initialMessages: CopilotMessage[] = []) {
       } catch (error) {
         console.error('Chat failed:', error);
 
+        // chatService throws a specific, honest message for the known
+        // failure cases (e.g. the backend waking up from idle) — show that
+        // instead of a single generic string that makes every failure look
+        // like the same unexplained outage. Only truly unexpected/non-Error
+        // throws fall back to the generic copy.
+        const content =
+          error instanceof Error && error.message
+            ? error.message
+            : 'Sorry, I could not connect to the AI right now. Please try again.';
+
         const errorMsg: CopilotMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: 'Sorry, I could not connect to the AI right now. Please try again.',
+          content,
           timestamp: new Date(),
         };
 
