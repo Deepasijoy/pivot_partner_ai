@@ -268,32 +268,59 @@ const LandingPage: React.FC = () => {
 
       <main id="main-content">
         {/* ================================================================
-            HERO — the AI input is the primary CTA; the H1 stays the clear
-            SEO/GEO-focused headline above it.
+            HERO — badge, benefit-driven H1, subheadline, a real primary +
+            secondary CTA, then the AI chat input as the visual anchor (a
+            live product surface, not a screenshot), a trust row, and a
+            scope-disclosure strip so visitors know Relocation/Life
+            Setup/Community exist even though Career & Income is the only
+            pillar that's fully built today.
             ================================================================ */}
         <section className="mx-auto max-w-6xl px-6 pb-16 pt-14 sm:pb-24 sm:pt-20" aria-labelledby="hero-heading">
           <div className="mx-auto max-w-3xl text-center">
+            <span
+              className="inline-flex items-center rounded-full px-4 py-1.5 text-xs font-semibold uppercase tracking-wide"
+              style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-dark)' }}
+            >
+              For trailing spouses &amp; relocating professionals
+            </span>
+
             <h1
               id="hero-heading"
-              className="text-4xl font-bold leading-tight tracking-tight sm:text-5xl"
+              className="mt-5 text-4xl font-bold leading-tight tracking-tight sm:text-5xl"
               style={{ color: 'var(--text-strong)' }}
             >
-              AI Relocation &amp; Career Copilot for Trailing Spouses
+              Continue your career after relocating abroad
             </h1>
 
-            <p className="mt-4 text-xl font-medium" style={{ color: 'var(--primary-dark)' }}>
-              Your life and career can travel with you.
+            <p className="mx-auto mt-4 max-w-xl text-lg leading-relaxed" style={{ color: 'var(--text-body)' }}>
+              For trailing spouses and expat professionals rebuilding a career abroad — get a free skill gap
+              assessment and personalized remote, local, and freelance job matches, in minutes.
             </p>
 
-            <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed" style={{ color: 'var(--text-body)' }}>
-              One AI copilot for relocation, career, income, life setup, and community.
-            </p>
+            {/* Primary + secondary CTA */}
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-5">
+              <button
+                type="button"
+                onClick={() => startWithPrompt('Get my free skill gap assessment')}
+                className="inline-flex items-center gap-2 rounded-md px-6 py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90"
+                style={{ backgroundColor: 'var(--accent-gold)' }}
+              >
+                Get my free skill gap assessment
+                <ArrowRight size={17} aria-hidden="true" />
+              </button>
+              <a
+                href="#how-it-works"
+                className="text-sm font-medium underline-offset-4 hover:underline"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                See how it works
+              </a>
+            </div>
           </div>
 
-          {/* Primary CTA: a real input into the product, not a static mock-up.
-              Submitting (or picking a starter prompt) hands the message to
-              /app, where it's sent through the same Groq chat already used
-              across the app — see App.tsx's initialPrompt effect. */}
+          {/* Visual anchor: the same functional chat input as before — still
+              a real handoff into the product via startWithPrompt/App.tsx's
+              initialPrompt + Groq chat, not a decorative mock-up. */}
           <form onSubmit={handleHeroSubmit} className="mx-auto mt-10 max-w-xl">
             <div
               className="flex items-center gap-3 rounded-md border-2 px-5 py-4 shadow-soft transition-colors focus-within:border-[var(--primary)]"
@@ -301,14 +328,14 @@ const LandingPage: React.FC = () => {
             >
               <Sparkles size={20} className="shrink-0" style={{ color: 'var(--primary)' }} aria-hidden="true" />
               <label htmlFor="hero-ai-input" className="sr-only">
-                Tell PivotPartner what&rsquo;s changing
+                Or tell PivotPartner what&rsquo;s changing
               </label>
               <input
                 id="hero-ai-input"
                 type="text"
                 value={heroInput}
                 onChange={(e) => setHeroInput(e.target.value)}
-                placeholder="Tell PivotPartner what's changing…"
+                placeholder="Or tell PivotPartner what's changing…"
                 className="flex-1 text-base"
                 style={{
                   border: 'none',
@@ -344,35 +371,48 @@ const LandingPage: React.FC = () => {
             </div>
           </form>
 
-          <div className="mt-6 text-center">
-            <a
-              href="#how-it-works"
-              className="text-sm font-medium underline-offset-4 hover:underline"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              See how it works
-            </a>
+          {/* Trust row */}
+          <div
+            className="mx-auto mt-8 flex max-w-2xl flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <span>✓ No fake job listings</span>
+            <span>✓ Personalized skill gap analysis</span>
+            <span>✓ Built by someone who&rsquo;s relocated internationally 3 times</span>
+          </div>
+
+          {/* Scope disclosure: Career & Income is the only fully-built
+              pillar today — this says so honestly while still showing
+              visitors the full product vision. */}
+          <div
+            className="mx-auto mt-8 flex max-w-3xl flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t pt-6 text-sm"
+            style={{ borderColor: 'var(--border-warm)' }}
+          >
+            <span className="inline-flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+              <Globe size={14} aria-hidden="true" />
+              Relocation
+            </span>
+            <span className="inline-flex items-center gap-1.5 font-semibold" style={{ color: 'var(--text-strong)' }}>
+              <Briefcase size={14} style={{ color: 'var(--accent-gold)' }} aria-hidden="true" />
+              Career &amp; income
+            </span>
+            <span className="inline-flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+              <Home size={14} aria-hidden="true" />
+              Life setup
+            </span>
+            <span className="inline-flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+              <Users size={14} aria-hidden="true" />
+              Community
+            </span>
           </div>
         </section>
 
-        {/* ================================================================
-            DEFINITION — establishes the core term for readers and for
-            AI-search / GEO before the rest of the page assumes it.
-            ================================================================ */}
-        <section className="mx-auto max-w-3xl px-6 pb-14 sm:pb-16" aria-labelledby="definition-heading">
-          <h2
-            id="definition-heading"
-            className="text-xl font-bold sm:text-2xl"
-            style={{ color: 'var(--text-strong)' }}
-          >
-            What does &ldquo;trailing spouse&rdquo; mean?
-          </h2>
-          <p className="mt-3 text-base leading-relaxed" style={{ color: 'var(--text-body)' }}>
-            A <strong>trailing spouse</strong> is a partner who relocates internationally because their spouse or
-            partner accepted a job or assignment abroad. It usually means pausing a career to support someone
-            else&rsquo;s move — that&rsquo;s the part PivotPartner exists to change.
-          </p>
-        </section>
+        {/* Note: the standalone "What does 'trailing spouse' mean?" definition
+            block that used to live here was removed — it duplicated the first
+            FAQ entry below ("What is a trailing spouse?"), which is also the
+            one marked up via FAQPage JSON-LD. Keeping both was duplicate
+            content, which search engines and AI answer engines penalize
+            rather than reward; the FAQ is now the single canonical answer. */}
 
         {/* ================================================================
             WHO IT'S FOR
