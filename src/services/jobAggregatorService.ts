@@ -349,7 +349,21 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
   // provider call; the geo-filter + dedup pass below collapses the common
   // case of the same posting surfacing under more than one term.
   const primaryResultsByQuery = await Promise.all(
-    queries.map((what) => runProviders(primaryApplicable, providerParamsFor(what)))
+    queries.map(async (what) => {
+      const results = await runProviders(primaryApplicable, providerParamsFor(what));
+      // Visible (console.log, not console.debug — see JobMatcherTab.tsx's
+      // matching note) per-term breakdown: with multiple query terms now
+      // fanned out in parallel, a single flattened total can no longer show
+      // which specific term a provider's raw (pre geo-filter/dedup) count
+      // came from, which is exactly what's needed to tell "a bad query term
+      // zeroed everyone out" apart from "a fine query term's results were
+      // filtered/deduped away later".
+      console.log(
+        `[jobAggregatorService] raw results for query "${what}":`,
+        results.map((r) => `${r.source}=${r.ok ? r.jobs.length : `FAILED(${r.error})`}`).join(', ')
+      );
+      return results;
+    })
   );
   const primaryResults = primaryResultsByQuery.flat();
   logProviderResults(primaryResults);

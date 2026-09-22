@@ -271,6 +271,15 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
     }
 
     const query = deriveJobQuery(parsedProfile);
+    // Visible (not console.debug, which Chrome/Firefox hide behind a
+    // "Verbose" filter by default) so a live search's actual query terms
+    // and the reasoning that produced them are always inspectable —
+    // deriveJobQuery()'s source/reasoning fields exist for exactly this,
+    // but were never actually surfaced anywhere before now.
+    console.log(
+      `[JobMatcherTab] likelyRole=${JSON.stringify(parsedProfile.likelyRole)} -> query for ${workModel}:`,
+      { primaryQuery: query.primaryQuery, alternateQueries: query.alternateQueries, source: query.source, reasoning: query.reasoning }
+    );
     const aggregated = await searchJobs({
       // Every candidate term, not just the single best guess — a resume
       // whose dominant skill cluster resolves to e.g. "Data Analyst" /
