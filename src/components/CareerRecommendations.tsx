@@ -59,6 +59,14 @@ interface CareerRecommendationsProps {
   // compare a live Remote listing's own text against it for the
   // EOR/eligibility note below. Never used for scoring/matching.
   destinationCountryName?: string;
+  // True when the whole profile being viewed is the built-in example
+  // resume, not a real upload (see App.tsx's isSampleProfile). Suppresses
+  // the Remote section's own "these are example jobs" banner below — when
+  // the RESUME itself is already the sample, JobMatcherTab.tsx's own
+  // top-level "You're viewing a sample result" banner already tells the
+  // user everything on the page is illustrative; a second, Remote-specific
+  // banner saying the same thing again would be redundant, not clearer.
+  isSampleProfile?: boolean;
 }
 
 function getMatchColor(score: number) {
@@ -86,6 +94,7 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   onAnalyzeSkillGaps,
   onExploreRemote,
   destinationCountryName,
+  isSampleProfile,
 }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // Which alternative (if any) the user asked to see after Local came up
@@ -479,6 +488,34 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               )
             )}
           </div>
+          {/* remoteJobSource !== 'live' means jobsForCareerGuidance()
+              (called when building remoteRecs above) substituted
+              mockRemoteJobs — fabricated salaries/companies/match scores —
+              in place of real listings. The small pill above already
+              names this, but it's easy to miss while scrolling past cards
+              that otherwise render identically to real ones; this is the
+              same visual pattern as JobMatcherTab.tsx's own top-level
+              "You're viewing a sample result" banner, applied here for the
+              same reason: a real resume's real search hitting an
+              empty/failed live result must never look indistinguishable
+              from genuine live data. Suppressed when isSampleProfile is
+              already true — that top-level banner already covers it, and
+              showing both would just repeat the same message. 'empty' and
+              'error' get distinct copy on purpose (jobService.ts's own
+              JobFetchSource doc comment: these mean different things to
+              the user and must never be conflated). */}
+          {remoteJobSource && remoteJobSource !== 'live' && !isSampleProfile && remoteRecs.length > 0 && (
+            <div
+              className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-3"
+              style={{ borderColor: 'var(--accent-gold)', backgroundColor: 'var(--surface-2)' }}
+            >
+              <p className="text-sm font-medium" style={{ color: 'var(--text-strong)' }}>
+                {remoteJobSource === 'empty'
+                  ? "No live Remote matches were found for your profile right now — the cards below are illustrative examples, not real openings."
+                  : "We couldn't load live Remote listings right now — the cards below are illustrative examples, not real openings."}
+              </p>
+            </div>
+          )}
           <div className="space-y-3">{remoteRecs.map((rec, index) => renderCard(rec, index, 'remote'))}</div>
         </section>
       )}

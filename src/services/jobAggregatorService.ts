@@ -343,35 +343,51 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
     };
   }
 
-  // Phase 1: every applicable provider, for every query term, all in
-  // parallel — every candidate query (e.g. a resume's dominant-skill-
-  // cluster alternates, not just its single best guess) gets a real
-  // provider call; the geo-filter + dedup pass below collapses the common
-  // case of the same posting surfacing under more than one term.
-  const primaryResultsByQuery = await Promise.all(
-    queries.map(async (what) => {
-      const results = await runProviders(primaryApplicable, providerParamsFor(what));
-      // Visible (console.log, not console.debug — see JobMatcherTab.tsx's
-      // matching note) per-term breakdown: with multiple query terms now
-      // fanned out in parallel, a single flattened total can no longer show
-      // which specific term a provider's raw (pre geo-filter/dedup) count
-      // came from, which is exactly what's needed to tell "a bad query term
-      // zeroed everyone out" apart from "a fine query term's results were
-      // filtered/deduped away later".
-      console.log(
-        `[jobAggregatorService] raw results for query "${what}":`,
-        results.map((r) => `${r.source}=${r.ok ? r.jobs.length : `FAILED(${r.error})`}`).join(', ')
-      );
-      return results;
-    })
-  );
-  const primaryResults = primaryResultsByQuery.flat();
-  logProviderResults(primaryResults);
+  // Runs every applicable primary provider for one query term, with the
+  // same visible (console.log, not console.debug) per-term breakdown as
+  // before: a single flattened total can't show which specific term a
+  // provider's raw (pre geo-filter/dedup) count came from, which is
+  // exactly what's needed to tell "a bad query term zeroed everyone out"
+  // apart from "a fine term's results were filtered/deduped away later".
+  const runQuery = async (what: string) => {
+    const results = await runProviders(primaryApplicable, providerParamsFor(what));
+    console.log(
+      `[jobAggregatorService] raw results for query "${what}":`,
+      results.map((r) => `${r.source}=${r.ok ? r.jobs.length : `FAILED(${r.error})`}`).join(', ')
+    );
+    return results;
+  };
 
-  const primaryDeduped = geoFilterAndDedupe(
+  // Phase 1: primaryQuery is tried first, across every applicable
+  // provider, in parallel. alternateQueries are fanned out too, but ONLY
+  // if primaryQuery's own (geo-filtered, deduped) results come back empty
+  // — not unconditionally alongside it. Every extra query term multiplies
+  // outbound request volume against providers with real request caps
+  // (Adzuna's free tier is a low, real quota), for no benefit in the
+  // common case where primaryQuery alone already finds something; this
+  // still gets a candidate resume's full alternate-cluster coverage
+  // (Data Analyst / Business Intelligence Analyst / Data Scientist, e.g.)
+  // exactly when it's actually needed — when the first term alone found
+  // nothing — at the cost of running those extra queries sequentially
+  // after primaryQuery rather than concurrently with it, only in that
+  // already-slower empty-first-try case.
+  const [primaryQuery, ...alternateQueries] = queries;
+  let primaryResults = await runQuery(primaryQuery);
+  let primaryDeduped = geoFilterAndDedupe(
     primaryResults.flatMap((result) => result.jobs),
-    providerParamsFor(queries[0])
+    providerParamsFor(primaryQuery)
   );
+
+  if (primaryDeduped.length === 0 && alternateQueries.length > 0) {
+    const alternateResultsByQuery = await Promise.all(alternateQueries.map(runQuery));
+    primaryResults = [...primaryResults, ...alternateResultsByQuery.flat()];
+    primaryDeduped = geoFilterAndDedupe(
+      primaryResults.flatMap((result) => result.jobs),
+      providerParamsFor(primaryQuery)
+    );
+  }
+
+  logProviderResults(primaryResults);
 
   let finalDeduped = primaryDeduped;
   let allProviderResults = primaryResults;

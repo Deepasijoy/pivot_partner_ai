@@ -14,11 +14,14 @@
 // (supports() below).
 
 import { fetchWithRetry, FetchAbortError } from '../../utils/fetchWithRetry';
+import { JOB_FETCH_TIMEOUT_MS } from './jobFetchTimeout';
 import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchResult } from './types';
 
 const API_URL = 'https://remotive.com/api/remote-jobs';
 
-const FETCH_TIMEOUT_MS = Number(import.meta.env?.VITE_JOB_FETCH_TIMEOUT_MS) || 10_000;
+// Called directly from the browser (no backend hop) — see
+// arbeitnowProvider.ts's matching comment for why this still shares
+// jobFetchTimeout.ts's constant.
 
 interface RemotiveJob {
   id: number;
@@ -84,7 +87,7 @@ async function search(params: ProviderSearchParams): Promise<ProviderSearchResul
   try {
     const query = new URLSearchParams({ search: params.what, limit: '30' });
     const response = await fetchWithRetry(`${API_URL}?${query.toString()}`, {
-      timeoutMs: params.timeoutMs ?? FETCH_TIMEOUT_MS,
+      timeoutMs: params.timeoutMs ?? JOB_FETCH_TIMEOUT_MS,
       signal: params.signal,
     });
     if (!response.ok) {

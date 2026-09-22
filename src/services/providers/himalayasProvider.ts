@@ -10,12 +10,14 @@
 // 'remote' searches, exactly like remotiveProvider.ts.
 
 import { fetchWithRetry, FetchAbortError } from '../../utils/fetchWithRetry';
+import { JOB_FETCH_TIMEOUT_MS } from './jobFetchTimeout';
 import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchResult, SalaryPeriod } from './types';
 
 // Optional-chained — see adzunaProvider.ts for why (importable under plain
 // Node, where there is no import.meta.env at all).
 const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
-const FETCH_TIMEOUT_MS = Number(import.meta.env?.VITE_JOB_FETCH_TIMEOUT_MS) || 10_000;
+// Proxied through this app's own backend — see jobFetchTimeout.ts for why
+// the shared default needs cold-start headroom specifically because of that.
 
 // Himalayas' own published docs describe locationRestrictions as an array
 // of {alpha2, name, slug} objects — but live verification against the real
@@ -155,7 +157,7 @@ async function search(params: ProviderSearchParams): Promise<ProviderSearchResul
     if (params.destinationCountry) query.set('country', params.destinationCountry);
 
     const response = await fetchWithRetry(`${API_URL}/api/jobs/himalayas?${query.toString()}`, {
-      timeoutMs: params.timeoutMs ?? FETCH_TIMEOUT_MS,
+      timeoutMs: params.timeoutMs ?? JOB_FETCH_TIMEOUT_MS,
       signal: params.signal,
     });
     if (!response.ok) {
