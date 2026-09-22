@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import type { ResumeProfile, PillarTab, PreferredWorkModel } from '../types';
 import { Sparkles, ArrowUpRight, ChevronRight, Globe, Briefcase, Home, Users, MapPin } from 'lucide-react';
 import { QUICK_START_PROMPTS } from '../data/quickStartPrompts';
-import { COUNTRIES } from '../data/countries';
+import DestinationField from './DestinationField';
 
 interface DashboardHomeProps {
   origin: string;
@@ -276,36 +276,14 @@ const DashboardHome: React.FC<DashboardHomeProps> = ({
               trailing margin only overflows the container instead of
               shrinking the field — padding on the parent is what actually
               narrows it. */}
-          <div className="pr-10 lg:pr-0">
-            <label htmlFor="dashboard-destination-country" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
-              Destination
-            </label>
-            <select
-              id="dashboard-destination-country"
-              value={destinationCountryCode}
-              onChange={(e) => {
-                const code = e.target.value;
-                const country = COUNTRIES.find((c) => c.code === code);
-                onDestinationCountryChange(code, country?.name ?? '');
-              }}
-              className="w-full text-sm"
-            >
-              <option value="">Select a country…</option>
-              {COUNTRIES.map((country) => (
-                <option key={country.code} value={country.code}>
-                  {country.name}
-                </option>
-              ))}
-            </select>
-            <input
-              id="dashboard-destination-city"
-              type="text"
-              value={destinationCity}
-              onChange={(e) => onDestinationCityChange(e.target.value)}
-              placeholder="City or region, e.g. Dubai"
-              className="w-full text-sm mt-1.5"
-            />
-          </div>
+          <DestinationField
+            idPrefix="dashboard"
+            countryCode={destinationCountryCode}
+            city={destinationCity}
+            onCountryChange={onDestinationCountryChange}
+            onCityChange={onDestinationCityChange}
+            className="pr-10 lg:pr-0"
+          />
 
           <div>
             <label htmlFor="dashboard-move-timing" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>

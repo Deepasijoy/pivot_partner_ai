@@ -10,7 +10,7 @@ import RelocationReadiness from './components/RelocationReadiness'
 import HousingResources from './components/HousingResources'
 import CommunityResources from './components/CommunityResources'
 import { useGroqChat } from './hooks/useGroqChat'
-import { isActionableJobIntent, isActionableRelocationIntent } from './utils/jobIntentDetection'
+import { isActionableJobIntent, isActionableRelocationIntent, isActionableSkillAnalysisIntent } from './utils/jobIntentDetection'
 import type { JobFetchResult } from './services/jobService'
 import { jobsForCareerGuidance } from './services/jobService'
 import { generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
@@ -18,7 +18,7 @@ import { rankJobsForUser } from './services/recommendationService'
 import { buildAiContext } from './services/aiContextService'
 import { getMatchFitBand } from './services/matchFitBand'
 import { INITIAL_CAREER_SEARCH_STATE, type CareerSearchState } from './components/JobMatcherTab'
-import { COUNTRIES } from './data/countries'
+import DestinationField from './components/DestinationField'
 import { useAuth } from './contexts/AuthContext'
 import { Stethoscope, Landmark, GraduationCap, LogOut, MessageCircle, X } from 'lucide-react'
 import './styles/theme.css'
@@ -106,6 +106,11 @@ function App() {
   // of relying on scrollIntoView, which doesn't reliably reach through the
   // overflow-hidden flex wrappers around it in this layout.
   const careerScrollContainerRef = useRef<HTMLDivElement>(null)
+  // One-shot signal consumed by JobMatcherTab.tsx to scroll to and focus
+  // the real resume-upload control — see openResumeUpload below, the one
+  // canonical action both the chat "Analyze My Resume" CTA and the merged
+  // sidebar "Adapt My Resume" pill now trigger.
+  const [focusUploadRequestId, setFocusUploadRequestId] = useState(0)
 
   useEffect(() => {
     const state = location.state as { initialPrompt?: string } | null
@@ -117,6 +122,19 @@ function App() {
   }, [])
 
   const goToPillar = (tab: PillarTab) => setActiveTab(tab)
+
+  // The one canonical "take me to the resume upload screen" action — used
+  // by the chat CTA button(s) (action: 'open-resume-parser', attached to an
+  // assistant message) and directly by the sidebar's "Adapt My Resume"
+  // pill (handleQuickAction below), so there's a single real behavior
+  // behind both instead of two near-identical but differently-wired
+  // buttons. Switches to Career & Income, then increments the one-shot
+  // focus signal JobMatcherTab.tsx watches to scroll to and focus the
+  // actual upload control.
+  const openResumeUpload = () => {
+    goToPillar('career')
+    setFocusUploadRequestId((n) => n + 1)
+  }
 
   // Stable-ish reference so JobMatcherTab's fetch effect (which lists this
   // in its dependency array) doesn't re-run beyond what parsedProfile
@@ -211,6 +229,35 @@ Open Career & Income to see your full skill-gap breakdown and career paths.`,
           id: (Date.now() + 1).toString(),
           role: 'assistant',
           content: "To help me match opportunities to your experience, let's start with your resume.",
+          timestamp: new Date(),
+          action: 'open-resume-parser',
+        }
+        pushMessage(aiMsg)
+      }, 500)
+
+      return
+    }
+
+    // Same short-circuit shape as the job-intent branch above, for a
+    // skill-gap/skills-analysis question with no resume in context yet
+    // (see isActionableSkillAnalysisIntent) — without this, the AI copilot
+    // has nothing to analyze and, per real observed behavior, falls back to
+    // a 5-point manual questionnaire instead of pointing at the app's own
+    // working upload -> skill-extraction -> scoreJob() pipeline.
+    if (!parsedProfile && isActionableSkillAnalysisIntent(text)) {
+      const userMsg: CopilotMessage = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: text,
+        timestamp: new Date(),
+      }
+      pushMessage(userMsg)
+
+      setTimeout(() => {
+        const aiMsg: CopilotMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: "Let's take a look — upload your resume and I'll break down your skill gaps.",
           timestamp: new Date(),
           action: 'open-resume-parser',
         }
@@ -343,7 +390,15 @@ Tell me your destination and expected income to start the analysis.`,
     }
 
     if (action === 'resume') {
-      setActiveTab('career')
+      // Merged with the chat CTA's canonical action (see openResumeUpload)
+      // rather than just switching tabs — previously this pill and the
+      // chat's "Analyze my resume" button behaved differently (this one
+      // never scrolled to or focused the actual upload control), which is
+      // exactly the "two near-identical buttons" the resume-CTA fix was
+      // asked to avoid. No separate action-button is attached to the
+      // assistant reply below, since this click already navigates there
+      // directly — attaching one too would be the redundant second button.
+      openResumeUpload()
 
       const userMsg: CopilotMessage = {
         id: Date.now().toString(),
@@ -399,6 +454,23 @@ Let's make your experience travel with you!`,
     setIsSampleProfile(isSample)
     careerAnalysisSent.current = false
 
+    // Part 2, sample-flow decision: pre-fill a sensible default destination
+    // rather than showing the same "add your destination" prompt a real
+    // upload gets. The sample path's whole point (see JobMatcherTab.tsx's
+    // handleTrySample) is a zero-extra-click demo — a required prompt here
+    // would undo that. Only sets it if nothing is already chosen, so it
+    // never overwrites a destination the visitor picked before trying the
+    // sample. 'gb'/London: a well-covered destination for every provider
+    // (see adzunaProvider.ts's ADZUNA_SUPPORTED_COUNTRY_CODES), English-
+    // language, no unusual Nominatim resolution risk — chosen so the
+    // sample's Remote search has a real, fair shot at genuine live results
+    // instead of defaulting straight to the mock substrate.
+    if (isSample && !destinationCountryCode) {
+      setDestinationCountryCode('gb')
+      setDestinationCountryName('United Kingdom')
+      setDestinationCity('London')
+    }
+
     const allSkills = profile.skills || []
 
     const aiMsg: CopilotMessage = {
@@ -413,7 +485,11 @@ Example profile:
 • Industries: ${profile.industries?.join(', ') || 'Various'}
 • Skills identified: ${allSkills.length}
 
-Upload your own resume in Career & Income anytime to get matched against real opportunities for your background.`
+${
+  !destinationCountryCode
+    ? "I've set your example destination to London, UK so you can see live-style results — change it anytime in Your Move.\n\n"
+    : ''
+}Upload your own resume in Career & Income anytime to get matched against real opportunities for your background.`
         : `Resume analyzed successfully!
 
 Your career profile:
@@ -501,7 +577,7 @@ Your career can travel with you.`,
             isLoading={isLoading}
             onSendPrompt={handleUserPrompt}
             onQuickAction={handleQuickAction}
-            onOpenResumeParser={() => goToPillar('career')}
+            onOpenResumeParser={openResumeUpload}
           />
         </div>
 
@@ -596,35 +672,18 @@ Your career can travel with you.`,
                         matching destination select for the same fix and
                         why it's padding on the wrapper, not margin on the
                         select itself. */}
-                    <div className="pr-10 lg:pr-0">
-                      <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
-                        Moving To
-                      </label>
-                      <select
-                        value={destinationCountryCode}
-                        onChange={(e) => {
-                          const code = e.target.value
-                          const country = COUNTRIES.find((c) => c.code === code)
-                          setDestinationCountryCode(code)
-                          setDestinationCountryName(country?.name ?? '')
-                        }}
-                        className="w-full text-sm"
-                      >
-                        <option value="">Select a country…</option>
-                        {COUNTRIES.map((country) => (
-                          <option key={country.code} value={country.code}>
-                            {country.name}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="text"
-                        value={destinationCity}
-                        onChange={(e) => setDestinationCity(e.target.value)}
-                        placeholder="City or region, e.g. Dubai"
-                        className="w-full text-sm mt-1.5"
-                      />
-                    </div>
+                    <DestinationField
+                      idPrefix="relocation"
+                      countryLabel="Moving To"
+                      countryCode={destinationCountryCode}
+                      city={destinationCity}
+                      onCountryChange={(code, name) => {
+                        setDestinationCountryCode(code)
+                        setDestinationCountryName(name)
+                      }}
+                      onCityChange={setDestinationCity}
+                      className="pr-10 lg:pr-0"
+                    />
 
                     <div>
                       <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
@@ -721,8 +780,15 @@ Your career can travel with you.`,
                 destinationCountryCode={destinationCountryCode}
                 destinationCountryName={destinationCountryName}
                 destinationCity={destinationCity}
+                onDestinationCountryChange={(code, name) => {
+                  setDestinationCountryCode(code)
+                  setDestinationCountryName(name)
+                }}
+                onDestinationCityChange={setDestinationCity}
                 onJobsResolved={handleJobsResolved}
                 scrollContainerRef={careerScrollContainerRef}
+                focusUploadRequestId={focusUploadRequestId}
+                onUploadFocusHandled={() => setFocusUploadRequestId(0)}
               />
             )}
 
@@ -856,7 +922,7 @@ Your career can travel with you.`,
                 onQuickAction={handleQuickAction}
                 onOpenResumeParser={() => {
                   setIsMobileChatOpen(false)
-                  goToPillar('career')
+                  openResumeUpload()
                 }}
               />
             </div>

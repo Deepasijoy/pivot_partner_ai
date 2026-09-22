@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useImperativeHandle, useRef, useState } from 'react';
 import type { ResumeProfile } from '../types';
 import { parseResume } from '../services/resumeParserService';
 
@@ -6,13 +6,31 @@ interface ResumeUploaderProps {
   onParsed?: (profile: ResumeProfile) => void;
 }
 
-const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
+// Exposed so a caller several components away (JobMatcherTab.tsx, on
+// behalf of App.tsx's "Analyze My Resume" chat CTA and the merged sidebar
+// pill) can bring this specific upload control into view and focus it,
+// without either of them needing to know this component's internal DOM
+// structure (the actual <input type="file"> is visually hidden — the
+// dropzone div is the real, visible, focusable affordance).
+export interface ResumeUploaderHandle {
+  focus: () => void;
+}
+
+const ResumeUploader = React.forwardRef<ResumeUploaderHandle, ResumeUploaderProps>(({ onParsed }, ref) => {
   const [file, setFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [parsedProfile, setParsedProfile] = useState<ResumeProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragActive, setIsDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropzoneRef = useRef<HTMLDivElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      dropzoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      dropzoneRef.current?.focus();
+    },
+  }));
 
   const selectFile = (selectedFile: File) => {
     setFile(selectedFile);
@@ -70,13 +88,14 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
   return (
     <div className="w-full max-w-xl mx-auto p-4 sm:p-6">
       <div
+        ref={dropzoneRef}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         onClick={() => fileInputRef.current?.click()}
         role="button"
         tabIndex={0}
-        className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 sm:p-10 text-center cursor-pointer transition-colors ${
+        className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 sm:p-10 text-center cursor-pointer transition-colors outline-offset-2 ${
           isDragActive ? 'border-[#26c485] bg-[#26c485]/5' : 'border-[var(--border-warm)] hover:border-[#26c485]'
         }`}
       >
@@ -164,6 +183,8 @@ const ResumeUploader: React.FC<ResumeUploaderProps> = ({ onParsed }) => {
       )}
     </div>
   );
-};
+});
+
+ResumeUploader.displayName = 'ResumeUploader';
 
 export default ResumeUploader;

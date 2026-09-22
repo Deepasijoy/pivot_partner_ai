@@ -4,6 +4,7 @@ import { getCareerRecommendations } from '../services/recommendationService';
 import { calculateSkillGaps } from '../services/skillAnalysisService';
 import { assessRemoteEligibility } from '../services/remoteEligibilityService';
 import { jobsForCareerGuidance, type JobFetchSource } from '../services/jobService';
+import { decideLocalOrHybridSectionDisplay, decideRemoteSectionDisplay } from '../services/jobSectionDisplay';
 import { getMatchFitBand } from '../services/matchFitBand';
 import { isSafeExternalUrl } from '../utils/urlSafety';
 import { formatRelativePostedAt } from '../services/jobFreshness';
@@ -67,6 +68,17 @@ interface CareerRecommendationsProps {
   // user everything on the page is illustrative; a second, Remote-specific
   // banner saying the same thing again would be redundant, not clearer.
   isSampleProfile?: boolean;
+  // Part 2 — whether a real destination country has been resolved yet (see
+  // JobMatcherTab.tsx's destinationCountryCode / its own destination-
+  // required prompt). A live job search can't mean anything without one
+  // (jobAggregatorService.ts/locationService.ts both require it), so while
+  // this is false, NONE of Local/Hybrid/Remote may render any job card —
+  // mock or otherwise — only an "add your destination" prompt. See
+  // services/jobSectionDisplay.ts for the actual decision logic.
+  hasDestination?: boolean;
+  // Opens/scrolls to JobMatcherTab's own destination prompt — used by each
+  // section's "add your destination" empty state below.
+  onAddDestination?: () => void;
 }
 
 function getMatchColor(score: number) {
@@ -95,6 +107,8 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   onExploreRemote,
   destinationCountryName,
   isSampleProfile,
+  hasDestination = false,
+  onAddDestination,
 }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // Which alternative (if any) the user asked to see after Local came up
@@ -115,7 +129,12 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   // already did via its own default before this change; it just now has to
   // be applied explicitly, since a genuinely empty live-result array (as
   // opposed to `undefined`) no longer triggers that fallback on its own.
-  const remoteRecs = workModels.includes('remote')
+  // Gated on hasDestination FIRST (Part 2): without a resolved destination,
+  // the live search never even ran, and jobsForCareerGuidance()'s mock
+  // fallback must not be presented as a job listing in that case — see
+  // the Remote section's own "add your destination" empty state below,
+  // which renders in place of this when hasDestination is false.
+  const remoteRecs = workModels.includes('remote') && hasDestination
     ? getCareerRecommendations(profile, { jobs: jobsForCareerGuidance(remoteJobs) })
     : [];
 
@@ -455,13 +474,15 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
         </div>
       )}
 
-      {workModels.includes('remote') && (
+      {workModels.includes('remote') && (() => {
+        const display = decideRemoteSectionDisplay({ hasDestination, jobSource: remoteJobSource });
+        return (
         <section>
           <div className="mb-3 flex items-center gap-2">
             <h3 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Remote
             </h3>
-            {remoteJobSource ? (
+            {display.kind === 'needs-destination' ? null : remoteJobSource ? (
               <span
                 className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
                 style={
@@ -488,6 +509,34 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               )
             )}
           </div>
+
+          {/* Part 2 — no destination resolved yet means the live search
+              never even ran (see JobMatcherTab.tsx's search effects, all
+              gated on resolvedLocation); jobsForCareerGuidance()'s mock
+              substrate must never fill in for that unlabeled — this
+              replaces the pill/banner/cards entirely, not just adds to
+              them. */}
+          {display.kind === 'needs-destination' && (
+            <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+              <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                Add your destination to see live jobs.
+              </p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                We need to know where you're headed to search real Remote listings.
+              </p>
+              {onAddDestination && (
+                <button
+                  type="button"
+                  onClick={onAddDestination}
+                  className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                  style={{ backgroundColor: 'var(--primary-dark)', color: 'white' }}
+                >
+                  Add destination
+                </button>
+              )}
+            </div>
+          )}
+
           {/* remoteJobSource !== 'live' means jobsForCareerGuidance()
               (called when building remoteRecs above) substituted
               mockRemoteJobs — fabricated salaries/companies/match scores —
@@ -504,21 +553,24 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               'error' get distinct copy on purpose (jobService.ts's own
               JobFetchSource doc comment: these mean different things to
               the user and must never be conflated). */}
-          {remoteJobSource && remoteJobSource !== 'live' && !isSampleProfile && remoteRecs.length > 0 && (
+          {display.kind === 'example' && !isSampleProfile && remoteRecs.length > 0 && (
             <div
               className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-3"
               style={{ borderColor: 'var(--accent-gold)', backgroundColor: 'var(--surface-2)' }}
             >
               <p className="text-sm font-medium" style={{ color: 'var(--text-strong)' }}>
-                {remoteJobSource === 'empty'
+                {display.reason === 'empty'
                   ? "No live Remote matches were found for your profile right now — the cards below are illustrative examples, not real openings."
                   : "We couldn't load live Remote listings right now — the cards below are illustrative examples, not real openings."}
               </p>
             </div>
           )}
-          <div className="space-y-3">{remoteRecs.map((rec, index) => renderCard(rec, index, 'remote'))}</div>
+          {display.kind !== 'needs-destination' && (
+            <div className="space-y-3">{remoteRecs.map((rec, index) => renderCard(rec, index, 'remote'))}</div>
+          )}
         </section>
-      )}
+        );
+      })()}
 
       {workModels.includes('freelance') && (
         <section>
@@ -533,12 +585,37 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
         </section>
       )}
 
-      {workModels.includes('local') && (
+      {workModels.includes('local') && (() => {
+        const display = decideLocalOrHybridSectionDisplay({
+          hasDestination,
+          jobSource: localJobSource,
+          hasJobs: localRecs.length > 0,
+        });
+        return (
         <section>
           <h3 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
             Local
           </h3>
-          {localJobsLoading ? (
+          {display === 'needs-destination' ? (
+            <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+              <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                Add your destination to see live jobs.
+              </p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                We need to know where you're headed to search real Local listings.
+              </p>
+              {onAddDestination && (
+                <button
+                  type="button"
+                  onClick={onAddDestination}
+                  className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                  style={{ backgroundColor: 'var(--primary-dark)', color: 'white' }}
+                >
+                  Add destination
+                </button>
+              )}
+            </div>
+          ) : localJobsLoading ? (
             <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
               <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
                 Finding live opportunities…
@@ -631,14 +708,40 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
             </div>
           )}
         </section>
-      )}
+        );
+      })()}
 
-      {workModels.includes('hybrid') && (
+      {workModels.includes('hybrid') && (() => {
+        const display = decideLocalOrHybridSectionDisplay({
+          hasDestination,
+          jobSource: hybridJobSource,
+          hasJobs: hybridRecs.length > 0,
+        });
+        return (
         <section>
           <h3 className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
             Hybrid
           </h3>
-          {hybridJobsLoading ? (
+          {display === 'needs-destination' ? (
+            <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
+              <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
+                Add your destination to see live jobs.
+              </p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                We need to know where you're headed to search real Hybrid listings.
+              </p>
+              {onAddDestination && (
+                <button
+                  type="button"
+                  onClick={onAddDestination}
+                  className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                  style={{ backgroundColor: 'var(--primary-dark)', color: 'white' }}
+                >
+                  Add destination
+                </button>
+              )}
+            </div>
+          ) : hybridJobsLoading ? (
             <div className="rounded-md border p-5" style={{ borderColor: 'var(--border-warm)', backgroundColor: 'var(--surface)' }}>
               <p className="font-semibold" style={{ color: 'var(--text-strong)' }}>
                 Finding live opportunities…
@@ -664,7 +767,8 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
             </div>
           )}
         </section>
-      )}
+        );
+      })()}
 
       {allRecs.length > 0 && (
         <div className="mt-6 p-4 bg-[#26c485]/5 border border-[#26c485]/20 rounded-lg text-center">

@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ResumeProfile, WorkModel, JobOpportunity } from '../types';
-import ResumeUploader from './ResumeUploader';
+import ResumeUploader, { type ResumeUploaderHandle } from './ResumeUploader';
+import DestinationField from './DestinationField';
 import CareerProfile from './CareerProfile';
 import CareerRecommendations from './CareerRecommendations';
 import SkillAnalysis from './SkillAnalysis';
@@ -62,6 +63,12 @@ interface JobMatcherTabProps {
   destinationCountryCode?: string;
   destinationCountryName?: string;
   destinationCity?: string;
+  // Lets this tab's own inline "add your destination" prompt below write
+  // back to the same lifted App.tsx state DashboardHome's/the Relocation
+  // tab's own DestinationField instances already write to — one shared
+  // source of truth for destination, never a second copy local to here.
+  onDestinationCountryChange?: (code: string, name: string) => void;
+  onDestinationCityChange?: (city: string) => void;
   // Reports the canonical job-fetch result (and the work models it was
   // computed for) up to App.tsx, purely so it can be included in AI
   // context — mirrors the existing onProfileParsed pattern. Does not add
@@ -73,6 +80,14 @@ interface JobMatcherTabProps {
   // scroll directly via scrollTo/scrollTop — scrollIntoView() alone doesn't
   // reliably reach through the overflow-hidden flex wrappers around it.
   scrollContainerRef?: React.RefObject<HTMLDivElement>;
+  // Incremented by App.tsx's canonical openResumeUpload() (the merged
+  // "Analyze My Resume" chat CTA / sidebar pill action) each time it's
+  // invoked — a one-shot signal, not a boolean, so a repeat click while
+  // already on this tab still re-triggers the scroll+focus. Consumed once
+  // via onUploadFocusHandled below so a later unrelated remount of this
+  // tab (e.g. just navigating back to it) never replays an old request.
+  focusUploadRequestId?: number;
+  onUploadFocusHandled?: () => void;
 }
 
 const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
@@ -86,8 +101,12 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
   destinationCountryCode,
   destinationCountryName,
   destinationCity,
+  onDestinationCountryChange,
+  onDestinationCityChange,
   onJobsResolved,
   scrollContainerRef,
+  focusUploadRequestId,
+  onUploadFocusHandled,
 }) => {
   const {
     workModels,
@@ -156,12 +175,14 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
     return rankJobsForUser(parsedProfile, jobsForCareerGuidance(activeModelJobs)).slice(0, 5);
   }, [parsedProfile, workModels, localJobResult, hybridJobResult, remoteJobResult]);
 
-  // Lets "Analyze Skill Gap" (in CareerRecommendations) scroll the user down
-  // to the existing Tier 3 skill-analysis section below, instead of
-  // triggering any new analysis or AI request.
-  const skillAnalysisRef = useRef<HTMLDivElement>(null);
-  const scrollToSkillAnalysis = () => {
-    const target = skillAnalysisRef.current;
+  // Shared by every "scroll this tab's own content down to X" action below
+  // (Analyze Skill Gap, the resume-upload CTA, the destination-required
+  // prompt) — scrollIntoView() alone doesn't reliably reach through the
+  // overflow-hidden flex wrappers around this tab's content in this
+  // layout (confirmed in testing), so the target's offset within the
+  // actual overflow-y-auto container is computed directly and that
+  // container is scrolled itself instead.
+  const scrollWithinContainer = (target: HTMLElement | null) => {
     if (!target) return;
 
     const container = scrollContainerRef?.current;
@@ -172,18 +193,52 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
       return;
     }
 
-    // Compute the target's offset within the container directly and scroll
-    // the container itself. scrollIntoView() asks the browser to walk up
-    // and scroll whichever ancestor scrolling boxes it thinks are needed —
-    // in this layout, the intermediate flex wrappers around the container
-    // are `overflow-hidden`, which also count as scrolling boxes, and in
-    // testing the browser did not end up moving the actual overflow-y-auto
-    // container's scrollTop. Scrolling that container explicitly sidesteps
-    // the ambiguity.
     const offsetWithinContainer =
       target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
 
     container.scrollTo({ top: offsetWithinContainer, behavior: 'smooth' });
+  };
+
+  // Lets "Analyze Skill Gap" (in CareerRecommendations) scroll the user down
+  // to the existing Tier 3 skill-analysis section below, instead of
+  // triggering any new analysis or AI request.
+  const skillAnalysisRef = useRef<HTMLDivElement>(null);
+  const scrollToSkillAnalysis = () => scrollWithinContainer(skillAnalysisRef.current);
+
+  // Resume-upload CTA (App.tsx's "Analyze My Resume" chat button / merged
+  // sidebar pill) — scrolls to and focuses the real upload screen below,
+  // rather than just switching to this tab and leaving the user to find it.
+  const uploadSectionRef = useRef<HTMLDivElement>(null);
+  const uploaderRef = useRef<ResumeUploaderHandle>(null);
+  const lastHandledFocusRequestId = useRef(0);
+  useEffect(() => {
+    if (
+      !focusUploadRequestId ||
+      focusUploadRequestId === lastHandledFocusRequestId.current ||
+      parsedProfile // already have a profile — nothing to scroll to here
+    ) {
+      return;
+    }
+    lastHandledFocusRequestId.current = focusUploadRequestId;
+    scrollWithinContainer(uploadSectionRef.current);
+    uploaderRef.current?.focus();
+    onUploadFocusHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusUploadRequestId, parsedProfile]);
+
+  // Destination-required prompt (Part 2) — "not now" lets a user proceed to
+  // Local/Hybrid/Remote without a destination; CareerRecommendations then
+  // shows its own "add your destination" empty state instead of any cards
+  // (never mock jobs relabeled as real). Resets per resume via handleReset
+  // below, so a newly uploaded/re-tried resume asks again rather than
+  // silently carrying over a previous dismissal.
+  const [destinationPromptDismissed, setDestinationPromptDismissed] = useState(false);
+  const destinationPromptRef = useRef<HTMLDivElement>(null);
+  const scrollToDestinationPrompt = () => {
+    setDestinationPromptDismissed(false);
+    // The prompt only renders once dismissed flips back to false — give
+    // React a frame to mount it before trying to scroll to its ref.
+    requestAnimationFrame(() => scrollWithinContainer(destinationPromptRef.current));
   };
 
   const handleProfileParsed = (profile: ResumeProfile) => {
@@ -210,6 +265,7 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
   const handleReset = () => {
     onResetProfile?.();
     onSearchStateChange(INITIAL_CAREER_SEARCH_STATE);
+    setDestinationPromptDismissed(false);
   };
 
   // "Explore Remote" (CareerRecommendations.tsx's Local-empty-state
@@ -447,7 +503,7 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
           real matching/skill-gap output before being asked to upload a
           real file. The real upload box stays below, unchanged. */}
       {!parsedProfile && (
-        <div className="space-y-4">
+        <div ref={uploadSectionRef} className="space-y-4">
           <div className="rounded-lg border p-6" style={{ borderColor: 'var(--primary-dark)', backgroundColor: 'var(--primary-light)' }}>
             <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--primary-dark)' }}>
               See it in action first
@@ -469,13 +525,52 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
             <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-strong)' }}>
               Or upload your own resume
             </h3>
-            <ResumeUploader onParsed={handleProfileParsed} />
+            <ResumeUploader ref={uploaderRef} onParsed={handleProfileParsed} />
           </div>
         </div>
       )}
 
       {/* Work model preference — collected once per resume, before results */}
       {parsedProfile && workModels.length === 0 && <WorkModelSelector onContinue={setWorkModels} />}
+
+      {/* Part 2 — destination required before a live job search can run.
+          Shown once a resume is parsed and at least one work model is
+          chosen, but no destination country is set yet; the search effects
+          below already require resolvedLocation, so nothing fires while
+          this is showing. "Not now" (destinationPromptDismissed) lets the
+          user proceed anyway — CareerRecommendations then shows its own
+          "add your destination" empty state per section instead of ever
+          substituting mock jobs unlabeled. */}
+      {parsedProfile && workModels.length > 0 && !destinationCountryCode && !destinationPromptDismissed && (
+        <div
+          ref={destinationPromptRef}
+          className="rounded-lg border p-6"
+          style={{ borderColor: 'var(--primary-dark)', backgroundColor: 'var(--primary-light)' }}
+        >
+          <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--primary-dark)' }}>
+            Where are you headed?
+          </h3>
+          <p className="text-sm mb-4" style={{ color: 'var(--text-body)' }}>
+            We need your destination to search real, live job listings for you.
+          </p>
+          <DestinationField
+            idPrefix="career-destination-prompt"
+            countryCode={destinationCountryCode ?? ''}
+            city={destinationCity ?? ''}
+            onCountryChange={(code, name) => onDestinationCountryChange?.(code, name)}
+            onCityChange={(city) => onDestinationCityChange?.(city)}
+            className="max-w-sm"
+          />
+          <button
+            type="button"
+            onClick={() => setDestinationPromptDismissed(true)}
+            className="mt-3 text-sm font-medium underline transition-opacity hover:opacity-80"
+            style={{ color: 'var(--primary-dark)' }}
+          >
+            Not now
+          </button>
+        </div>
+      )}
 
       {parsedProfile && workModels.length > 0 && (
         <>
@@ -551,6 +646,8 @@ const JobMatcherTab: React.FC<JobMatcherTabProps> = ({
               onExploreRemote={handleExploreRemote}
               destinationCountryName={resolvedLocation?.countryName}
               isSampleProfile={isSampleProfile}
+              hasDestination={Boolean(destinationCountryCode)}
+              onAddDestination={scrollToDestinationPrompt}
             />
           </section>
 
