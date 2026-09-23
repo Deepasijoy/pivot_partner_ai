@@ -61,12 +61,19 @@ describe('searchJobs — provider isolation (10)', () => {
         );
       }
 
-      // Remotive is fallback-only now (queried only when every other
-      // provider returns zero combined jobs) — Arbeitnow already succeeds
-      // below, so Remotive must never be called here at all. Deliberately
-      // left unmocked: if the aggregator regresses and calls it anyway,
-      // this throws and fails the test loudly instead of silently mocking
-      // around the bug.
+      // Remotive is a regular primary provider now (feat-remotive-cached) —
+      // it's called alongside everyone else on every remote search, via
+      // this app's own cached backend proxy (never Remotive's live API
+      // directly — see remotiveProvider.ts). Returns empty here so this
+      // test's "only Arbeitnow's job" assertion stays meaningful.
+      if (href.includes('/api/jobs/remotive')) {
+        return new Response(JSON.stringify({ jobs: [] }), { status: 200 });
+      }
+
+      if (href.includes('/api/jobs/himalayas')) {
+        return new Response(JSON.stringify({ jobs: [] }), { status: 200 });
+      }
+
       init?.signal?.addEventListener('abort', () => {});
       throw new Error(`Unexpected fetch: ${href}`);
     }) as typeof fetch;
@@ -86,15 +93,15 @@ describe('searchJobs — provider isolation (10)', () => {
     assert.ok(failed.some((r) => r.source === 'adzuna'));
     assert.ok(failed.some((r) => r.source === 'jsearch'));
     assert.ok(succeeded.some((r) => r.source === 'arbeitnow'));
-    assert.ok(!result.providerResults.some((r) => r.source === 'remotive'), 'Remotive must not be called when another provider already found a job');
+    assert.ok(succeeded.some((r) => r.source === 'remotive'), 'Remotive is a primary provider now — it must be called and succeed alongside Arbeitnow, even with zero jobs of its own');
   });
 
-  test('final production check: a persistent HTTP 5xx, a malformed response, and JSearch "not configured" all fail simultaneously — Remotive\'s fallback kicks in and still produces a live result, never a false "no jobs"', async () => {
-    // Every PRIMARY_PROVIDERS provider (Adzuna, Arbeitnow, JSearch,
+  test('final production check: a persistent HTTP 5xx, a malformed response, and JSearch "not configured" all fail simultaneously — Remotive is still healthy and its result is used, never a false "no jobs"', async () => {
+    // Every other PRIMARY_PROVIDERS provider (Adzuna, Arbeitnow, JSearch,
     // Himalayas — Himalayas unmocked below, so it also fails) returns
-    // nothing usable, so this now exercises jobAggregatorService.ts's
-    // Phase 2 fallback: Remotive is queried only because Phase 1 came back
-    // completely empty, and its result becomes the live result.
+    // nothing usable; Remotive (called via this app's own cached backend
+    // proxy, not its live API — see remotiveProvider.ts) is the one
+    // healthy provider and its result becomes the live result.
     globalThis.fetch = (async (url) => {
       const href = String(url);
 
@@ -116,14 +123,14 @@ describe('searchJobs — provider isolation (10)', () => {
         return new Response(JSON.stringify({ data: 'not-an-array' }), { status: 200 });
       }
 
-      // Remotive: the sole healthy provider.
-      if (href.includes('remotive.com')) {
+      // Remotive (via the cached backend proxy): the sole healthy provider.
+      if (href.includes('/api/jobs/remotive')) {
         return new Response(
           JSON.stringify({
             jobs: [
               {
                 id: 42,
-                url: 'https://remotive.com/jobs/42',
+                url: 'https://remotive.com/remote-jobs/data/remote-data-analyst-42',
                 title: 'Remote Data Analyst',
                 company_name: 'Healthy Co',
                 candidate_required_location: 'United Kingdom',
@@ -285,7 +292,7 @@ describe('searchJobs — supersession / cancellation (11, 12)', () => {
         // Remote's Adzuna call resolves normally, never aborted in this test.
         return new Response(JSON.stringify({ results: [] }), { status: 200 });
       }
-      if (href.includes('remotive.com')) {
+      if (href.includes('/api/jobs/remotive')) {
         init?.signal?.addEventListener('abort', () => {
           remoteRequestAborted = true;
         });
@@ -294,7 +301,7 @@ describe('searchJobs — supersession / cancellation (11, 12)', () => {
             jobs: [
               {
                 id: 7,
-                url: 'https://remotive.com/jobs/7',
+                url: 'https://remotive.com/remote-jobs/data/remote-data-analyst-7',
                 title: 'Remote Data Analyst',
                 company_name: 'Still Running Co',
                 candidate_required_location: 'Worldwide',
@@ -304,6 +311,12 @@ describe('searchJobs — supersession / cancellation (11, 12)', () => {
           }),
           { status: 200 }
         );
+      }
+      if (href.includes('/api/jobs/himalayas')) {
+        return new Response(JSON.stringify({ jobs: [] }), { status: 200 });
+      }
+      if (href.includes('/api/jobs/jsearch')) {
+        return new Response(JSON.stringify({ error: 'not_configured' }), { status: 501 });
       }
       throw new TypeError('Failed to fetch');
     }) as typeof fetch;

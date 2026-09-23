@@ -1,13 +1,17 @@
-// Remotive provider adapter. Public, no API key (Access-Control-Allow-
-// Origin: *), so this calls the API directly from the browser.
-//
-// Its `search` param genuinely filters server-side for common/tech-adjacent
-// queries — but is confirmed, via direct API testing, to return broad,
-// largely irrelevant results for niche/non-tech occupations: a live
-// `search=Marine+Biologist` call returned 19 jobs (Senior React Developer,
-// DevOps Engineer, Head of Marketing & Communications, ...), none with any
-// marine-science connection at all. isRelevant() below is a loose,
-// additive safety net for exactly that gap — see its own comment.
+// Remotive provider adapter. Promoted from a fallback-only source to a
+// regular primary provider (feat-remotive-cached) — but Remotive's own API
+// terms cap real requests at roughly 4/day and forbid calling it per user
+// search, so this NEVER talks to Remotive's live API directly anymore.
+// Instead it calls this app's own backend proxy (GET /api/jobs/remotive,
+// server.js), which is backed by server/services/remotiveCache.js — a
+// snapshot refreshed at most once every 6 hours (Supabase-persisted so it
+// survives a Render free-tier sleep/restart), searched locally against
+// that snapshot rather than hitting Remotive again. See that file's own
+// header comment for the full terms and the live-behavior finding that
+// motivated this (Remotive's own search/category params currently have no
+// effect — their endpoint is served from a Cloudflare edge cache that
+// ignores query strings — so the cache's local search is doing the only
+// real filtering that happens today).
 //
 // Remotive is a remote-only job board — there is no local/hybrid listing
 // to return, so this provider only participates in 'remote' searches
@@ -17,11 +21,12 @@ import { fetchWithRetry, FetchAbortError } from '../../utils/fetchWithRetry';
 import { JOB_FETCH_TIMEOUT_MS } from './jobFetchTimeout';
 import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchResult } from './types';
 
-const API_URL = 'https://remotive.com/api/remote-jobs';
-
-// Called directly from the browser (no backend hop) — see
-// arbeitnowProvider.ts's matching comment for why this still shares
-// jobFetchTimeout.ts's constant.
+// Optional-chained — see adzunaProvider.ts for why (importable under plain
+// Node, where there is no import.meta.env at all).
+const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:3000';
+// Proxied through this app's own backend now (see the module comment
+// above) — shares jobFetchTimeout.ts's cold-start-aware default for the
+// same reason jsearchProvider.ts/himalayasProvider.ts do.
 
 interface RemotiveJob {
   id: number;
@@ -33,7 +38,8 @@ interface RemotiveJob {
   job_type?: string;
   publication_date?: string;
   // Free text, e.g. "USA", "Europe", "Worldwide" — the strongest remote-
-  // eligibility signal any of these providers gives.
+  // eligibility signal any of these providers gives; used directly by
+  // services/portabilityService.ts for the portability badge.
   candidate_required_location?: string;
   salary?: string;
   description?: string;
@@ -54,6 +60,9 @@ function mapRemotiveJob(job: RemotiveJob): NormalizedJob {
     location: job.candidate_required_location || 'Remote',
     workModel: 'remote',
     employmentType: job.job_type,
+    // Remotive's own job page — required by their API terms (link back
+    // to Remotive, never a copied/redirected company URL) — job.url
+    // already is that Remotive page, unmodified.
     applicationUrl: job.url,
     postedAt: job.publication_date,
     salaryRaw: job.salary || undefined,
@@ -61,18 +70,15 @@ function mapRemotiveJob(job: RemotiveJob): NormalizedJob {
   };
 }
 
-// Loose, additive relevance safety net — Remotive's own `search` filtering
-// already works well for common/tech-adjacent queries, so this removes a
-// result only when NONE of the query's significant words appear anywhere
-// in its title, category, or description; a query that already gets
-// well-filtered results is essentially unaffected (every genuinely
-// relevant job naturally mentions the query terms somewhere). Deliberately
-// not an occupation classifier and not stricter than that — a legitimate
-// adjacent title ("Environmental Data Analyst" for a marine-biology
-// search) still passes as long as its description mentions related
-// vocabulary; real occupation-aware scoring happens downstream in
-// occupationMatchingService.ts. Same shape as arbeitnowProvider.ts's
-// isRelevant(), kept provider-local per Step F.
+// Loose, additive relevance safety net — the backend cache (see the module
+// comment above) already filters by `search` against the same title/
+// category/description/tags text before this ever runs; this is a second,
+// client-side pass in case that filtering ever loosens, consistent with
+// Himalayas' own isRelevant() (which keeps a client-side check too despite
+// Himalayas' backend also filtering server-side). Removes a result only
+// when NONE of the query's significant words appear anywhere in its
+// title, category, or description — not an occupation classifier; real
+// occupation-aware scoring happens downstream in occupationMatchingService.ts.
 function isRelevant(job: RemotiveJob, what: string): boolean {
   const words = what
     .toLowerCase()
@@ -86,7 +92,7 @@ function isRelevant(job: RemotiveJob, what: string): boolean {
 async function search(params: ProviderSearchParams): Promise<ProviderSearchResult> {
   try {
     const query = new URLSearchParams({ search: params.what, limit: '30' });
-    const response = await fetchWithRetry(`${API_URL}?${query.toString()}`, {
+    const response = await fetchWithRetry(`${API_URL}/api/jobs/remotive?${query.toString()}`, {
       timeoutMs: params.timeoutMs ?? JOB_FETCH_TIMEOUT_MS,
       signal: params.signal,
     });
@@ -103,15 +109,7 @@ async function search(params: ProviderSearchParams): Promise<ProviderSearchResul
       return { source: 'remotive', jobs: [], ok: false, error: 'Remotive returned a malformed response.' };
     }
 
-    // Eligibility classification (confirmed / unclear / excluded-as-
-    // incompatible) is applied uniformly across every provider by
-    // jobAggregatorService.ts's filterByDestination — see
-    // geoMatch.ts's classifyRemoteEligibility — so this adapter no longer
-    // pre-filters on it itself; doing so here as well previously excluded
-    // jobs with no eligibility text at all, which the aggregator now
-    // deliberately keeps (marked 'unclear') rather than hard-excludes.
-    // A listing with no real title is rejected outright. isRelevant() is
-    // the Step F client-side relevance safety net — see its own comment.
+    // A listing with no real title is rejected outright.
     const jobs = data.jobs
       .filter((job) => Boolean(job.title?.trim()))
       .filter((job) => isRelevant(job, params.what))

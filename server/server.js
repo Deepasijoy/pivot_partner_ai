@@ -18,6 +18,7 @@ import {
   getOptionalSkillIds,
   getSkill,
 } from './services/escoTaxonomyService.js'
+import { createRemotiveCache } from './services/remotiveCache.js'
 
 dotenv.config()
 
@@ -847,6 +848,28 @@ app.get('/api/jobs/himalayas', himalayasRateLimiter, async (req, res) => {
     res.status(500).json({
       error: error.message || 'Himalayas job search failed',
     })
+  }
+})
+
+// ============================================
+// REMOTIVE (cached) — see server/services/remotiveCache.js for the actual
+// caching/Supabase-persistence/refresh logic. This route is deliberately
+// thin: it never calls Remotive's live API itself, only ever asks the
+// cache, which is the ONLY thing allowed to do that (see that file's own
+// header comment for why — Remotive's API terms cap real requests at
+// ~4/day, and every user search here must never count as one).
+// ============================================
+
+const remotiveCache = createRemotiveCache({ supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY })
+
+app.get('/api/jobs/remotive', jobsRateLimiter, async (req, res) => {
+  try {
+    const { search = '', limit = '30' } = req.query
+    const jobs = await remotiveCache.searchJobs(String(search), Number(limit) || 30)
+    res.json({ jobs })
+  } catch (error) {
+    console.error('❌ Remotive cache lookup error:', error)
+    res.status(500).json({ error: error.message || 'Remotive cache lookup failed' })
   }
 })
 

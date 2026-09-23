@@ -5,11 +5,13 @@
 // layer (CareerRecommendations.tsx, recommendationService.ts,
 // matchingService.ts, skillAnalysisService.ts) needs to change.
 //
-// searchJobs() itself runs in two phases — Phase 1 (every provider in
-// PRIMARY_PROVIDERS below, in parallel) and a Phase 2 fallback (Remotive
-// alone, only when Phase 1 found nothing) — see the comments on
-// PRIMARY_PROVIDERS and inside searchJobs() for why Remotive is treated
-// specially.
+// Every provider in PRIMARY_PROVIDERS below (including Remotive — see its
+// own comment) is queried together, in parallel, on every applicable
+// search — there is no separate fallback phase anymore (feat-remotive-
+// cached retired the old "Remotive only when everything else returns
+// zero" gating, now that Remotive is backed by a locally-searched cache
+// rather than a live per-search call — see providers/remotiveProvider.ts
+// and server/services/remotiveCache.js).
 //
 // Deliberately does NOT touch jobService.ts's existing loadJobOpportunities
 // — that remains a fully independent, working direct-Adzuna path (see its
@@ -28,26 +30,22 @@ import { comparePostedAtDescending } from './jobFreshness';
 import { assessPortability, assessEorHiring, type PortabilityUser } from './portabilityService';
 import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchResult } from './providers/types';
 
-// Every provider queried up front, in parallel, on every applicable search.
-// Remotive is deliberately NOT here — it's a fallback-only source (see
-// searchJobs()'s Phase 2 below), only ever queried when every one of these
-// returns nothing usable, never merged alongside a result that already
-// exists. It's still a full JobProvider (providers/remotiveProvider.ts)
-// and is still referenced directly by searchJobs() — just outside this
-// array. "Only call me if the others found nothing" is a fundamentally
-// different kind of condition than supports()'s "am I even relevant to
-// this destination/work-model": supports() is a static, per-call
-// predicate over ProviderSearchParams alone, evaluated before any provider
-// has fetched anything, so it has no way to see what a sibling provider's
-// live results looked like. Expressing "conditional on prior results"
-// through supports() would mean giving it visibility into other
-// providers' outcomes (breaking its contract and the parallel-fan-out
-// model this array exists for) or running the whole array sequentially
-// just to accommodate one provider — not worth it for one deliberately
-// secondary source. An explicit Phase 2 branch in searchJobs() is the
-// cleaner fit for that axis, so it lives there instead of being forced
-// into this array.
-const PRIMARY_PROVIDERS: JobProvider[] = [adzunaProvider, arbeitnowProvider, jsearchProvider, himalayasProvider];
+// Every provider queried up front, in parallel, on every applicable
+// search. Remotive is included here now (feat-remotive-cached) — it used
+// to be excluded and called only as a last-resort fallback because a live
+// Remotive call on every search would have blown through their API's
+// request-frequency terms; now that remotiveProvider.ts calls this app's
+// own cached backend proxy instead of Remotive directly, a real Remotive
+// request only happens on the cache's own 6-hourly refresh, completely
+// decoupled from how many searches run — so it's safe to treat exactly
+// like every other provider.
+const PRIMARY_PROVIDERS: JobProvider[] = [
+  adzunaProvider,
+  arbeitnowProvider,
+  remotiveProvider,
+  jsearchProvider,
+  himalayasProvider,
+];
 
 export interface AggregatedSearchParams {
   // A ranked list of query terms to try — every term is sent to every
@@ -276,10 +274,7 @@ function toJobOpportunity(job: NormalizedJob, portabilityUser?: PortabilityUser)
 // Runs every given provider in parallel and always resolves to one
 // ProviderSearchResult per provider — a provider throwing (it never should;
 // see JobProvider.search's own contract) is defense-in-depth, converted to
-// a normal ok:false result rather than rejecting the whole batch. Shared by
-// both Phase 1 (every PRIMARY_PROVIDERS provider) and Phase 2 (Remotive
-// alone) in searchJobs() below, so the isolation guarantee is identical
-// either way.
+// a normal ok:false result rather than rejecting the whole batch.
 async function runProviders(providers: JobProvider[], providerParams: ProviderSearchParams): Promise<ProviderSearchResult[]> {
   if (providers.length === 0) return [];
 
@@ -305,8 +300,8 @@ function logProviderResults(results: ProviderSearchResult[]): void {
 }
 
 // Runs a provider batch's jobs through the same geo filter + dedup steps
-// every phase uses — kept as one small helper so Phase 1 and Phase 2 can
-// never drift into applying these two steps differently.
+// every query term uses — kept as one small helper so they never drift
+// into applying these two steps differently.
 function geoFilterAndDedupe(jobs: NormalizedJob[], providerParams: ProviderSearchParams): NormalizedJob[] {
   return deduplicateJobs(filterByDestination(jobs, providerParams), providerParams.workModel);
 }
@@ -349,9 +344,8 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
   // providers/types.ts), never on `what` — safe to gate once using any
   // query term as a stand-in.
   const primaryApplicable = PRIMARY_PROVIDERS.filter((provider) => provider.supports(providerParamsFor(queries[0])));
-  const remotiveApplicable = remotiveProvider.supports(providerParamsFor(queries[0]));
 
-  if (primaryApplicable.length === 0 && !remotiveApplicable) {
+  if (primaryApplicable.length === 0) {
     return {
       jobs: [],
       source: 'error',
@@ -375,19 +369,20 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
     return results;
   };
 
-  // Phase 1: primaryQuery is tried first, across every applicable
-  // provider, in parallel. alternateQueries are fanned out too, but ONLY
-  // if primaryQuery's own (geo-filtered, deduped) results come back empty
-  // — not unconditionally alongside it. Every extra query term multiplies
-  // outbound request volume against providers with real request caps
-  // (Adzuna's free tier is a low, real quota), for no benefit in the
-  // common case where primaryQuery alone already finds something; this
-  // still gets a candidate resume's full alternate-cluster coverage
-  // (Data Analyst / Business Intelligence Analyst / Data Scientist, e.g.)
-  // exactly when it's actually needed — when the first term alone found
-  // nothing — at the cost of running those extra queries sequentially
-  // after primaryQuery rather than concurrently with it, only in that
-  // already-slower empty-first-try case.
+  // primaryQuery is tried first, across every applicable provider
+  // (including Remotive — see PRIMARY_PROVIDERS above), in parallel.
+  // alternateQueries are fanned out too, but ONLY if primaryQuery's own
+  // (geo-filtered, deduped) results come back empty — not unconditionally
+  // alongside it. Every extra query term multiplies outbound request
+  // volume against providers with real request caps (Adzuna's free tier is
+  // a low, real quota), for no benefit in the common case where
+  // primaryQuery alone already finds something; this still gets a
+  // candidate resume's full alternate-cluster coverage (Data Analyst /
+  // Business Intelligence Analyst / Data Scientist, e.g.) exactly when
+  // it's actually needed — when the first term alone found nothing — at
+  // the cost of running those extra queries sequentially after
+  // primaryQuery rather than concurrently with it, only in that already-
+  // slower empty-first-try case.
   const [primaryQuery, ...alternateQueries] = queries;
   let primaryResults = await runQuery(primaryQuery);
   let primaryDeduped = geoFilterAndDedupe(
@@ -406,31 +401,8 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
 
   logProviderResults(primaryResults);
 
-  let finalDeduped = primaryDeduped;
-  let allProviderResults = primaryResults;
-
-  // Phase 2 (fallback only): Remotive is queried ONLY when Phase 1 came
-  // back with zero usable jobs after geo filtering and dedup — never
-  // alongside a Phase 1 result that already found something. Still gated
-  // by its own supports() (remote-only), so a local/hybrid search that
-  // legitimately found nothing never pointlessly calls a provider that
-  // could never have helped it anyway. Its own results go through the
-  // exact same geo filter + dedup pipeline, independently, for every query
-  // term too — the task is to return Remotive's own filtered/deduped
-  // results INSTEAD of Phase 1's (empty) ones, not to merge two already-
-  // empty sets.
-  if (primaryDeduped.length === 0 && remotiveApplicable) {
-    const remotiveResultsByQuery = await Promise.all(
-      queries.map((what) => runProviders([remotiveProvider], providerParamsFor(what)))
-    );
-    const remotiveResults = remotiveResultsByQuery.flat();
-    logProviderResults(remotiveResults);
-    allProviderResults = [...primaryResults, ...remotiveResults];
-    finalDeduped = geoFilterAndDedupe(
-      remotiveResults.flatMap((result) => result.jobs),
-      providerParamsFor(queries[0])
-    );
-  }
+  const finalDeduped = primaryDeduped;
+  const allProviderResults = primaryResults;
 
   const anySucceeded = allProviderResults.some((result) => result.ok);
   if (!anySucceeded) {

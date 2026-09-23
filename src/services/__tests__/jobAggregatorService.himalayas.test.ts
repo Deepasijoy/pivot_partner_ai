@@ -146,15 +146,19 @@ describe('searchJobs — Himalayas jobs enter the existing deduplication pipelin
 
 describe('searchJobs — Himalayas failure does not prevent the other primary providers\' results (19)', () => {
   test('Himalayas persistently failing still allows Adzuna, Arbeitnow, and JSearch to contribute live results', async () => {
-    // Remotive deliberately excluded from this scenario: it's fallback-only
-    // now, and Adzuna/Arbeitnow/JSearch succeeding below means Phase 1
-    // already returns jobs, so Remotive must never be called even though
-    // Himalayas (also Phase 1) failed.
+    // Remotive is a regular primary provider now (feat-remotive-cached) —
+    // called alongside everyone else via this app's own cached backend
+    // proxy (never Remotive's live API directly — see remotiveProvider.ts).
+    // Returns empty here so this test's company-list assertions stay
+    // focused on Adzuna/Arbeitnow/JSearch.
     globalThis.fetch = (async (url) => {
       const href = String(url);
 
       if (href.includes('/api/jobs/himalayas')) {
         throw new TypeError('Failed to fetch');
+      }
+      if (href.includes('/api/jobs/remotive')) {
+        return new Response(JSON.stringify({ jobs: [] }), { status: 200 });
       }
       if (href.includes('/api/jobs?')) {
         return new Response(
@@ -197,9 +201,6 @@ describe('searchJobs — Himalayas failure does not prevent the other primary pr
           { status: 200 }
         );
       }
-      // Remotive is deliberately unmocked and left to hit the generic
-      // "Unexpected fetch" throw below — it must never be called in this
-      // scenario, since Adzuna/Arbeitnow/JSearch already succeed.
       throw new Error(`Unexpected fetch: ${href}`);
     }) as typeof fetch;
 
@@ -215,7 +216,8 @@ describe('searchJobs — Himalayas failure does not prevent the other primary pr
     assert.ok(companies.includes('Adzuna Co'));
     assert.ok(companies.includes('JSearch Co'));
     assert.ok(companies.includes('Arbeitnow Co'));
-    assert.ok(!result.providerResults.some((r) => r.source === 'remotive'), 'Remotive must not be called when other providers already found jobs');
+    const remotiveResult = result.providerResults.find((r) => r.source === 'remotive');
+    assert.equal(remotiveResult?.ok, true, 'Remotive is a primary provider now — it must be called and succeed alongside the others');
 
     const himalayasResult = result.providerResults.find((r) => r.source === 'himalayas');
     assert.equal(himalayasResult?.ok, false);

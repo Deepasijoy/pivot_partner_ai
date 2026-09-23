@@ -144,7 +144,7 @@ describe('searchJobs — destination-country filtering integration (11, 12)', ()
           { status: 200 }
         );
       }
-      if (href.includes('remotive.com')) {
+      if (href.includes('/api/jobs/remotive')) {
         return new Response(JSON.stringify({ jobs: [] }), { status: 200 });
       }
       throw new Error(`Unexpected fetch: ${href}`);
@@ -193,7 +193,7 @@ describe('searchJobs — destination-country filtering integration (11, 12)', ()
           { status: 200 }
         );
       }
-      if (href.includes('remotive.com')) {
+      if (href.includes('/api/jobs/remotive')) {
         return new Response(JSON.stringify({ jobs: [] }), { status: 200 });
       }
       throw new Error(`Unexpected fetch: ${href}`);
