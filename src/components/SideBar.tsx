@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 import type { CopilotMessage } from '../types';
+import { mentionsVisaOrWorkAuthorization, VISA_DISCLAIMER_TEXT } from '../utils/visaDisclaimer';
 import {
   Send,
   Briefcase,
@@ -236,6 +237,18 @@ const Sidebar: React.FC<SidebarProps> = ({
                     <FileText size={13} aria-hidden="true" />
                     Analyze my resume
                   </button>
+                )}
+
+                {/* Fixed, always-correct disclaimer whenever a reply
+                    touches visa/work-authorization topics — SYSTEM_PROMPT
+                    tells the model to hedge this itself, but a prompt can't
+                    guarantee every generation phrases it exactly right, so
+                    this note is attached client-side independent of what
+                    the model actually said. */}
+                {msg.role === 'assistant' && mentionsVisaOrWorkAuthorization(msg.content) && (
+                  <p className="mt-2 text-xs italic" style={{ color: 'var(--text-muted)' }}>
+                    {VISA_DISCLAIMER_TEXT}
+                  </p>
                 )}
 
                 <p

@@ -999,7 +999,13 @@ async function callMainModel(groqMessages) {
       model: MODEL,
       messages: groqMessages,
 
-      temperature: 0.7,
+      // Lowered from 0.7 — this model gives career/relocation guidance
+      // including work-authorization framing, where consistent, careful
+      // phrasing (e.g. never stating visa eligibility as fact) matters more
+      // than varied wording. A lower temperature makes it more reliably
+      // follow the SYSTEM_PROMPT rules above rather than drifting into a
+      // less careful phrasing on some fraction of generations.
+      temperature: 0.3,
 
       // MODEL is a reasoning model (see callClassifier above): hidden
       // reasoning tokens are drawn from the same max_tokens budget as the
