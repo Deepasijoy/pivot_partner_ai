@@ -88,3 +88,21 @@ export function isActionableSkillAnalysisIntent(message: string): boolean {
   if (MY_RESUME_OR_CV.test(lower) && RESUME_ACTION_WORD.test(lower)) return true;
   return false;
 }
+
+// Same deterministic, pattern-based approach as the detectors above. Covers
+// "should I look locally or remote" / "local vs remote" / the sidebar's own
+// "Should I look locally, remotely or freelance?" and "Compare local vs
+// remote vs freelance" quick-start prompts — a question this app's own
+// LOCAL/REMOTE/FREELANCE income-path framework exists specifically to
+// answer. A simple "local" + "remote" co-occurrence is a strong,
+// unambiguous signal in this product's career/relocation-only domain (see
+// SYSTEM_PROMPT's INCOME section in server.js), so no fixed phrase list is
+// needed here.
+const LOCAL_WORD = /\blocal(ly)?\b/i;
+const REMOTE_WORD = /\bremote(ly)?\b/i;
+
+export function isActionableWorkModelComparisonIntent(message: string): boolean {
+  const lower = message.trim().toLowerCase();
+  if (!lower) return false;
+  return LOCAL_WORD.test(lower) && REMOTE_WORD.test(lower);
+}

@@ -10,7 +10,12 @@ import RelocationReadiness from './components/RelocationReadiness'
 import HousingResources from './components/HousingResources'
 import CommunityResources from './components/CommunityResources'
 import { useGroqChat } from './hooks/useGroqChat'
-import { isActionableJobIntent, isActionableRelocationIntent, isActionableSkillAnalysisIntent } from './utils/jobIntentDetection'
+import {
+  isActionableJobIntent,
+  isActionableRelocationIntent,
+  isActionableSkillAnalysisIntent,
+  isActionableWorkModelComparisonIntent,
+} from './utils/jobIntentDetection'
 import type { JobFetchResult } from './services/jobService'
 import { jobsForCareerGuidance } from './services/jobService'
 import { generateCareerPaths, mergeCareerPathSkillGaps } from './services/matchingService'
@@ -303,6 +308,52 @@ Open Career & Income to see your full skill-gap breakdown and career paths.`,
           timestamp: new Date(),
           action: 'open-resume-parser',
         }
+        pushMessage(aiMsg)
+      }, 500)
+
+      return
+    }
+
+    // Same short-circuit shape as the branches above, for a local-vs-remote
+    // work-model question with no resume/background known yet (see
+    // isActionableWorkModelComparisonIntent). Without this, the question
+    // reaches Groq with no CAREER PROFILE and, per real observed behavior,
+    // comes back as a 4-item questionnaire (past career, destination/work
+    // authorization, skills, work model) — even when a destination is
+    // already set. Destination is already known here (buildContext()
+    // includes it), so this only needs to ask about background — the one
+    // thing genuinely missing — acknowledging the destination by name, with
+    // the resume CTA attached for the fastest accurate answer. Once the
+    // user replies with any background (even a one-line reply, no parsed
+    // resume needed), that reply falls through to the generic sendPrompt
+    // call below like any other message, where SYSTEM_PROMPT's "ask at most
+    // one question" rules take over using the conversation history.
+    if (!parsedProfile && isActionableWorkModelComparisonIntent(text)) {
+      const userMsg: CopilotMessage = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: text,
+        timestamp: new Date(),
+      }
+      pushMessage(userMsg)
+
+      const destinationLabel = destination.trim()
+
+      setTimeout(() => {
+        const aiMsg: CopilotMessage = destinationLabel
+          ? {
+              id: (Date.now() + 1).toString(),
+              role: 'assistant',
+              content: `Great, you're moving to ${destinationLabel}. To tell you whether local or remote suits you better, what's your background? Upload your resume for the most accurate answer, or just tell me your last role in a line.`,
+              timestamp: new Date(),
+              action: 'open-resume-parser',
+            }
+          : {
+              id: (Date.now() + 1).toString(),
+              role: 'assistant',
+              content: "Where are you moving to? Once I know your destination, I can tell you whether local or remote work suits you better there.",
+              timestamp: new Date(),
+            }
         pushMessage(aiMsg)
       }, 500)
 

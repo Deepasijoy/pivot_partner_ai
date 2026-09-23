@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { isActionableSkillAnalysisIntent } from '../jobIntentDetection';
+import { isActionableSkillAnalysisIntent, isActionableWorkModelComparisonIntent } from '../jobIntentDetection';
 
 // Covers the Part 1 chat-CTA fix's detection layer: a user asking to
 // analyze their skills/skill gaps with no resume in context should short-
@@ -77,5 +77,34 @@ describe('isActionableSkillAnalysisIntent', () => {
 
   test('is case-insensitive', () => {
     assert.equal(isActionableSkillAnalysisIntent('FIND MY SKILL GAPS'), true);
+  });
+});
+
+describe('isActionableWorkModelComparisonIntent', () => {
+  test('matches the reported bug phrase and the sidebar quick-start prompts', () => {
+    const positives = [
+      'should I look locally or remote',
+      'Should I look locally, remotely or freelance?',
+      'Compare local vs remote vs freelance',
+      'local vs remote',
+      'Is it better to work locally or remotely?',
+    ];
+    for (const message of positives) {
+      assert.equal(isActionableWorkModelComparisonIntent(message), true, `expected a match for: "${message}"`);
+    }
+  });
+
+  test('does not match messages mentioning only one side', () => {
+    const negatives = [
+      '',
+      '   ',
+      'Hello!',
+      'Help me plan my move',
+      'What jobs are available locally?',
+      'I want a remote job',
+    ];
+    for (const message of negatives) {
+      assert.equal(isActionableWorkModelComparisonIntent(message), false, `expected no match for: "${message}"`);
+    }
   });
 });
