@@ -158,6 +158,29 @@ export interface JobOpportunity {
   remoteEligibilityStatus?: 'confirmed' | 'unclear';
   // See OccupationCategory above.
   occupationCategory?: OccupationCategory;
+  // PivotPartner's core differentiator — whether a live Remote listing is
+  // open to a candidate physically located in the user's destination
+  // country. Computed once in jobAggregatorService.ts's toJobOpportunity()
+  // (see services/portabilityService.ts's assessPortability), using a
+  // structured-field-first, description-text-second priority. Absent for
+  // Local/Hybrid (not a relevant concept there — already destination-
+  // verified by a different mechanism) and for mock/example jobs, which
+  // have no real listing to assess.
+  portability?: {
+    status: 'open' | 'restricted' | 'unknown';
+    message: string;
+    reason?: string;
+    source?: 'field' | 'description';
+  };
+  // Whether the listing explicitly mentions hiring via an Employer of
+  // Record / contractor / named EOR provider — a separate signal from
+  // portability above (a job can mention EOR hiring without confirming the
+  // user's specific destination is covered, and vice versa). Same absence
+  // rules as portability.
+  eor?: {
+    hiresViaEor: boolean;
+    message?: string;
+  };
 }
 
 export interface FreelanceGig {

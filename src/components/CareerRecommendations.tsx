@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import type { ResumeProfile, WorkModel, CareerRecommendation, JobOpportunity } from '../types';
 import { getCareerRecommendations } from '../services/recommendationService';
 import { calculateSkillGaps } from '../services/skillAnalysisService';
-import { assessRemoteEligibility } from '../services/remoteEligibilityService';
 import { jobsForCareerGuidance, type JobFetchSource } from '../services/jobService';
 import { decideLocalOrHybridSectionDisplay, decideRemoteSectionDisplay } from '../services/jobSectionDisplay';
 import { getMatchFitBand } from '../services/matchFitBand';
@@ -56,9 +55,9 @@ interface CareerRecommendationsProps {
   // fallback can show genuine live results instead of relying on a Remote
   // search that was never triggered.
   onExploreRemote?: () => void;
-  // The user's resolved relocation destination country name, used only to
-  // compare a live Remote listing's own text against it for the
-  // EOR/eligibility note below. Never used for scoring/matching.
+  // The user's resolved relocation destination country name — used for the
+  // Remote section's portability summary line ("N of M remote jobs are
+  // open to candidates in {country}") below. Never used for scoring/matching.
   destinationCountryName?: string;
   // True when the whole profile being viewed is the built-in example
   // resume, not a real upload (see App.tsx's isSampleProfile). Suppresses
@@ -114,6 +113,9 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   // Which alternative (if any) the user asked to see after Local came up
   // empty — null until they choose, so nothing is shown automatically.
   const [localFallbackChoice, setLocalFallbackChoice] = useState<'remote' | 'freelance' | null>(null);
+  // RESTRICTED Remote jobs are hidden by default (see visibleRemoteRecs
+  // below) — never dropped, just collapsed behind this toggle.
+  const [showRestrictedRemote, setShowRestrictedRemote] = useState(false);
 
   // Maps a CareerRecommendation back to the raw JobOpportunity it was built
   // from (getCareerRecommendations() summarizes id as `rec_${job.id}` and
@@ -137,6 +139,38 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
   const remoteRecs = workModels.includes('remote') && hasDestination
     ? getCareerRecommendations(profile, { jobs: jobsForCareerGuidance(remoteJobs) })
     : [];
+
+  // Portability badge (see services/portabilityService.ts) — PivotPartner's
+  // core differentiator: whether a live Remote listing is actually open to
+  // a candidate physically located in the destination, not just whether
+  // it's labeled "remote". Computed once per job in jobAggregatorService.ts
+  // and attached to the JobOpportunity; mock/fallback jobs (the
+  // jobsForCareerGuidance substrate used when the live search came back
+  // empty/failed) never have it, so this is naturally a no-op for those —
+  // gated on remoteJobSource === 'live' below anyway, for a summary line
+  // and sort/hide behavior that would be meaningless over illustrative data.
+  const portabilityFor = (rec: CareerRecommendation) => jobById.get(rec.id)?.portability;
+  const hasLivePortabilityData = remoteJobSource === 'live' && remoteRecs.some((rec) => portabilityFor(rec));
+
+  const PORTABILITY_SORT_RANK: Record<'open' | 'unknown' | 'restricted', number> = { open: 0, unknown: 1, restricted: 2 };
+  const sortedRemoteRecs = hasLivePortabilityData
+    ? [...remoteRecs].sort(
+        (a, b) =>
+          PORTABILITY_SORT_RANK[portabilityFor(a)?.status ?? 'unknown'] -
+          PORTABILITY_SORT_RANK[portabilityFor(b)?.status ?? 'unknown']
+      )
+    : remoteRecs;
+
+  const remoteOpenCount = sortedRemoteRecs.filter((rec) => portabilityFor(rec)?.status === 'open').length;
+  const remoteRestrictedCount = sortedRemoteRecs.filter((rec) => portabilityFor(rec)?.status === 'restricted').length;
+
+  // RESTRICTED jobs are hidden by default (never dropped — see the toggle
+  // in the Remote section below) so the default view leads with what's
+  // actually actionable for this destination.
+  const visibleRemoteRecs =
+    hasLivePortabilityData && !showRestrictedRemote
+      ? sortedRemoteRecs.filter((rec) => portabilityFor(rec)?.status !== 'restricted')
+      : sortedRemoteRecs;
 
   // Local is destination-scoped and must NEVER show mock/fallback jobs
   // relabeled as local — only ever shown when the independent Local search
@@ -226,31 +260,15 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
     // since recommendationService partitions them from the same source list.
     const skillGaps = calculateSkillGaps(profile.skills, [...rec.matchedSkills, ...rec.missingSkills]);
 
-    // Remote eligibility/EOR note — only for genuinely live Remote listings
-    // (never Local/Hybrid, which are already destination-verified via
-    // their scoped queries; never mock/example data). Looked up from the
-    // raw JobOpportunity this recommendation was built from, purely to
-    // read its own title/description/location text — no scoring involved.
+    // Portability badge (see services/portabilityService.ts) — only for
+    // genuinely live Remote listings (never Local/Hybrid, which are
+    // already destination-verified via their scoped queries; never mock/
+    // example data). Looked up from the raw JobOpportunity this
+    // recommendation was built from — computed once upstream in
+    // jobAggregatorService.ts, not re-derived here.
     const sourceJob = !isVerifiedLocation ? jobById.get(rec.id) : undefined;
-    const eligibility =
-      !isVerifiedLocation && cardJobSource === 'live' && sourceJob
-        ? assessRemoteEligibility(sourceJob, destinationCountryName)
-        : null;
-
-    // Structured-signal counterpart to `eligibility` above — derived by
-    // jobAggregatorService.ts from a provider's own country/eligibility
-    // fields (see geoMatch.ts's classifyRemoteEligibility), not from
-    // scanning this listing's own text. Shown only when the text-based
-    // `eligibility` check above has nothing more specific to say
-    // (null, or 'supported' — which renders no note at all today), so a
-    // job with genuinely no eligibility signal from either source always
-    // gets at least one honest, concise note rather than two overlapping
-    // ones.
-    const showUnclearEligibilityNote =
-      !isVerifiedLocation &&
-      cardJobSource === 'live' &&
-      sourceJob?.remoteEligibilityStatus === 'unclear' &&
-      (!eligibility || eligibility.status === 'supported');
+    const portability = !isVerifiedLocation && cardJobSource === 'live' ? sourceJob?.portability : undefined;
+    const eor = !isVerifiedLocation && cardJobSource === 'live' ? sourceJob?.eor : undefined;
 
     // Only ever render a real, absolute http(s) link — never trust
     // rec.applyUrl blindly as an href. See utils/urlSafety.ts.
@@ -292,6 +310,50 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               {getMatchFitBand(rec.matchScore)}
             </div>
           </div>
+
+          {/* Portability badge — see services/portabilityService.ts. Shown
+              on every Remote card (never Local/Hybrid — `portability` is
+              only ever set for those). Status word is deliberately short;
+              the full message/reason/source lives in the title tooltip
+              and again, spelled out, in the expanded panel below. */}
+          {portability && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span
+                className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-wide"
+                style={{
+                  fontFamily: 'var(--mono)',
+                  backgroundColor:
+                    portability.status === 'open'
+                      ? 'var(--primary-light)'
+                      : portability.status === 'restricted'
+                        ? 'var(--accent-gold-tint)'
+                        : 'var(--surface-2)',
+                  color:
+                    portability.status === 'open'
+                      ? 'var(--primary-dark)'
+                      : portability.status === 'restricted'
+                        ? 'var(--accent-gold-strong)'
+                        : 'var(--text-muted)',
+                }}
+                title={
+                  portability.source
+                    ? `${portability.message} — based on the job ${portability.source === 'field' ? "listing's own eligibility data" : 'description'}.`
+                    : portability.message
+                }
+              >
+                {portability.status === 'open' ? '✓ Open' : portability.status === 'restricted' ? '⚠ Restricted' : '? Unclear'}
+              </span>
+              {eor?.hiresViaEor && (
+                <span
+                  className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-wide"
+                  style={{ fontFamily: 'var(--mono)', backgroundColor: 'var(--accent-gold-tint)', color: 'var(--accent-gold-strong)' }}
+                  title={eor.message}
+                >
+                  EOR
+                </span>
+              )}
+            </div>
+          )}
 
           <p className="mt-2 text-sm text-[var(--text-light)]">{rec.reason}</p>
 
@@ -370,24 +432,25 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               )}
             </div>
 
-            {eligibility && eligibility.status !== 'supported' && (
+            {portability && (
               <div className="p-3 bg-[var(--surface)] border border-[var(--border-warm)] rounded-lg">
                 <p className="text-xs font-semibold text-[var(--text-light)] uppercase tracking-wider mb-1">
-                  Remote Eligibility
-                </p>
-                <p className="text-sm text-[var(--text-dark)]">{eligibility.message}</p>
-              </div>
-            )}
-
-            {showUnclearEligibilityNote && (
-              <div className="p-3 bg-[var(--surface)] border border-[var(--border-warm)] rounded-lg">
-                <p className="text-xs font-semibold text-[var(--text-light)] uppercase tracking-wider mb-1">
-                  Remote Eligibility
+                  Portability
                 </p>
                 <p className="text-sm text-[var(--text-dark)]">
-                  Remote eligibility not specified — the listing doesn&rsquo;t say which countries it&rsquo;s open to.
-                  Verify directly with the employer before applying.
+                  {portability.message}
+                  {portability.reason ? ` — ${portability.reason}.` : ''}
                 </p>
+                {portability.source && (
+                  <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {portability.source === 'field'
+                      ? "Based on the listing's own eligibility data."
+                      : 'Based on the job description.'}
+                  </p>
+                )}
+                {eor?.hiresViaEor && (
+                  <p className="mt-2 text-sm text-[var(--text-dark)]">✓ {eor.message}</p>
+                )}
               </div>
             )}
 
@@ -565,8 +628,35 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
               </p>
             </div>
           )}
+          {/* Portability summary — only meaningful over a genuinely live
+              search (see hasLivePortabilityData above); never shown over
+              mock/example cards, where every job would trivially show
+              'unknown' and the count would be misleading, not honest. */}
+          {hasLivePortabilityData && destinationCountryName && (
+            <p className="mb-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+              {remoteOpenCount} of {sortedRemoteRecs.length} remote jobs {sortedRemoteRecs.length === 1 ? 'is' : 'are'} open to
+              candidates in {destinationCountryName}.
+            </p>
+          )}
+
           {display.kind !== 'needs-destination' && (
-            <div className="space-y-3">{remoteRecs.map((rec, index) => renderCard(rec, index, 'remote'))}</div>
+            <div className="space-y-3">{visibleRemoteRecs.map((rec, index) => renderCard(rec, index, 'remote'))}</div>
+          )}
+
+          {/* RESTRICTED jobs are never silently dropped — this toggle is
+              the only way to hide them, and it's always available whenever
+              at least one exists. */}
+          {hasLivePortabilityData && remoteRestrictedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowRestrictedRemote((shown) => !shown)}
+              className="mt-3 text-sm font-medium underline-offset-2 hover:underline"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              {showRestrictedRemote
+                ? 'Hide jobs not open to your destination'
+                : `Show jobs not open to ${destinationCountryName ?? 'your destination'} (${remoteRestrictedCount})`}
+            </button>
           )}
         </section>
         );

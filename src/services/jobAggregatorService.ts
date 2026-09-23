@@ -25,6 +25,7 @@ import { jsearchProvider } from './providers/jsearchProvider';
 import { himalayasProvider } from './providers/himalayasProvider';
 import { cityOrRegionMatchesLocationText, classifyRemoteEligibility } from './providers/geoMatch';
 import { comparePostedAtDescending } from './jobFreshness';
+import { assessPortability, assessEorHiring, type PortabilityUser } from './portabilityService';
 import type { JobProvider, NormalizedJob, ProviderSearchParams, ProviderSearchResult } from './providers/types';
 
 // Every provider queried up front, in parallel, on every applicable search.
@@ -225,7 +226,17 @@ export function filterByDestination(jobs: NormalizedJob[], params: ProviderSearc
 // already does, so CareerRecommendations.tsx/recommendationService.ts/
 // matchingService.ts/skillAnalysisService.ts/remoteEligibilityService.ts
 // all keep working completely unchanged.
-function toJobOpportunity(job: NormalizedJob): JobOpportunity {
+//
+// `portabilityUser` is passed only for a live 'remote' search with a
+// resolved destination (see searchJobs() below) — computed here, once,
+// while the full NormalizedJob (country, remoteEligibility) is still
+// available, rather than in the UI layer where remoteEligibility has
+// already been folded into `description` text below and `country` isn't
+// carried through JobOpportunity at all. Local/Hybrid calls omit it, so
+// `portability`/`eor` stay undefined there — those work models have no
+// portability concept (see CareerRecommendations.tsx, which only renders
+// the badge for Remote).
+function toJobOpportunity(job: NormalizedJob, portabilityUser?: PortabilityUser): JobOpportunity {
   // Folds the remote-eligibility free text (e.g. Remotive's
   // candidate_required_location) into the description text, so the
   // existing remoteEligibilityService.ts regex-based detector — which
@@ -253,6 +264,12 @@ function toJobOpportunity(job: NormalizedJob): JobOpportunity {
     postedAt: job.postedAt,
     source: job.source,
     remoteEligibilityStatus: job.remoteEligibilityStatus,
+    portability: portabilityUser
+      ? assessPortability({ title: job.title, description: job.description, remoteEligibility: job.remoteEligibility }, portabilityUser)
+      : undefined,
+    eor: portabilityUser
+      ? assessEorHiring({ title: job.title, description: job.description, remoteEligibility: job.remoteEligibility })
+      : undefined,
   };
 }
 
@@ -443,8 +460,17 @@ export async function searchJobs(params: AggregatedSearchParams): Promise<Aggreg
   // jobs, in their original relative order (stable sort), never dropped.
   const bySortedFreshness = [...finalDeduped].sort((a, b) => comparePostedAtDescending(a.postedAt, b.postedAt));
 
+  // Portability (see portabilityService.ts) only has meaning for a Remote
+  // search with a resolved destination — Local/Hybrid jobs are already
+  // destination-verified by the geo filter above, so the concept doesn't
+  // apply there at all.
+  const portabilityUser: PortabilityUser | undefined =
+    workModel === 'remote' && params.destinationCountry && params.destinationCountryName
+      ? { countryCode: params.destinationCountry, countryName: params.destinationCountryName }
+      : undefined;
+
   return {
-    jobs: bySortedFreshness.map(toJobOpportunity),
+    jobs: bySortedFreshness.map((job) => toJobOpportunity(job, portabilityUser)),
     source: 'live',
     providerResults: allProviderResults,
   };

@@ -553,15 +553,23 @@ Let's make your experience travel with you!`,
     // handleTrySample) is a zero-extra-click demo — a required prompt here
     // would undo that. Only sets it if nothing is already chosen, so it
     // never overwrites a destination the visitor picked before trying the
-    // sample. 'gb'/London: a well-covered destination for every provider
-    // (see adzunaProvider.ts's ADZUNA_SUPPORTED_COUNTRY_CODES), English-
-    // language, no unusual Nominatim resolution risk — chosen so the
-    // sample's Remote search has a real, fair shot at genuine live results
-    // instead of defaulting straight to the mock substrate.
+    // sample.
+    //
+    // 'gh'/Accra, Ghana (feat-portability-badge task): deliberately NOT the
+    // previous London/UK default — the whole point of this sample is to
+    // show the new portability badge doing its actual job for the kind of
+    // destination PivotPartner's badge exists for in the first place.
+    // Trade-off, disclosed rather than hidden: Ghana is NOT in Adzuna's
+    // supported country list (adzunaProvider.ts's
+    // ADZUNA_SUPPORTED_COUNTRY_CODES), so the sample's live Remote search
+    // runs on Arbeitnow + Remotive + Himalayas only — fewer raw results
+    // than the old UK default had, but a more honest demonstration: this
+    // is exactly the real experience a Ghana-based user gets today, badge
+    // included.
     if (isSample && !destinationCountryCode) {
-      setDestinationCountryCode('gb')
-      setDestinationCountryName('United Kingdom')
-      setDestinationCity('London')
+      setDestinationCountryCode('gh')
+      setDestinationCountryName('Ghana')
+      setDestinationCity('Accra')
     }
 
     const allSkills = profile.skills || []
@@ -580,7 +588,7 @@ Example profile:
 
 ${
   !destinationCountryCode
-    ? "I've set your example destination to London, UK so you can see live-style results — change it anytime in Your Move.\n\n"
+    ? "I've set your example destination to Accra, Ghana so you can see live-style results — change it anytime in Your Move.\n\n"
     : ''
 }Upload your own resume in Career & Income anytime to get matched against real opportunities for your background.`
         : `Resume analyzed successfully!
