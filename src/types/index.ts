@@ -181,6 +181,13 @@ export interface JobOpportunity {
     hiresViaEor: boolean;
     message?: string;
   };
+  // Set only for Remotive jobs (see providers/remotiveProvider.ts's
+  // detectGenericApplyLinks) — true when this listing's apply link is
+  // shared by 2+ other postings in the same fetch, a strong signal it's a
+  // generic recruiter/staffing-agency funnel rather than a page specific
+  // to this role. The role itself may still be genuine — this is
+  // disclosed in the UI, never used to hide the card.
+  applyLinkIsGeneric?: boolean;
 }
 
 export interface FreelanceGig {

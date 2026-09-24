@@ -269,6 +269,9 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
     const sourceJob = !isVerifiedLocation ? jobById.get(rec.id) : undefined;
     const portability = !isVerifiedLocation && cardJobSource === 'live' ? sourceJob?.portability : undefined;
     const eor = !isVerifiedLocation && cardJobSource === 'live' ? sourceJob?.eor : undefined;
+    // See providers/remotiveProvider.ts's detectGenericApplyLinks — never
+    // hides the card, just discloses the apply link next to it below.
+    const applyLinkIsGeneric = !isVerifiedLocation && cardJobSource === 'live' ? sourceJob?.applyLinkIsGeneric : false;
 
     // Only ever render a real, absolute http(s) link — never trust
     // rec.applyUrl blindly as an href. See utils/urlSafety.ts.
@@ -426,6 +429,11 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
                     You may be applying before relocating — the employer or job source may apply its own location,
                     work-authorization, or regional restrictions. Verify eligibility directly on the listing.
                   </p>
+                  {applyLinkIsGeneric && (
+                    <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      Apply link may lead to a general recruiter page, not this specific role.
+                    </p>
+                  )}
                 </>
               ) : (
                 <p className="text-sm font-medium text-[var(--text-dark)]">Listing link unavailable.</p>

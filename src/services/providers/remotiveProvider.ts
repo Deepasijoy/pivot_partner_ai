@@ -49,7 +49,7 @@ interface RemotiveResponse {
   jobs: RemotiveJob[];
 }
 
-function mapRemotiveJob(job: RemotiveJob): NormalizedJob {
+function mapRemotiveJob(job: RemotiveJob, applyLinkIsGeneric: boolean): NormalizedJob {
   return {
     id: `remotive_${job.id}`,
     source: 'remotive',
@@ -67,7 +67,65 @@ function mapRemotiveJob(job: RemotiveJob): NormalizedJob {
     postedAt: job.publication_date,
     salaryRaw: job.salary || undefined,
     remoteEligibility: job.candidate_required_location,
+    applyLinkIsGeneric: applyLinkIsGeneric || undefined,
   };
+}
+
+// Remotive's API gives no dedicated "apply URL" field distinct from
+// `url` (Remotive's own per-job page, always unique — that's what
+// applicationUrl above is). The real external application destination,
+// when the employer uses one (e.g. a staffing agency's own site), is only
+// ever embedded inline in the job's HTML description as an ordinary
+// <a href> — confirmed by direct inspection while investigating a real
+// case (four differently-titled "roles" — AI Engineer, .NET Developer,
+// Data Scientist, React Developer — whose descriptions all linked to
+// lemon.io/for-developers, a generic talent-marketplace signup page, not
+// a page about any of those specific roles). Returns the link normalized
+// to origin+pathname (tracking query params like utm_campaign stripped)
+// so that real case — where the four links differed only by their
+// campaign parameter — is actually caught; an exact full-URL comparison
+// would have missed it entirely. Returns undefined for a link to
+// Remotive itself, or when the description has no link at all (most jobs
+// apply directly on Remotive, which this is not trying to flag).
+function extractExternalDescriptionLink(description: string | undefined): string | undefined {
+  if (!description) return undefined;
+  for (const match of description.matchAll(/<a\s[^>]*\bhref\s*=\s*["']([^"']+)["']/gi)) {
+    try {
+      const url = new URL(match[1]);
+      if (!url.hostname.endsWith('remotive.com')) {
+        return `${url.origin}${url.pathname}`;
+      }
+    } catch {
+      // Not a valid absolute URL (e.g. a relative "#" anchor) — skip it.
+    }
+  }
+  return undefined;
+}
+
+// Flags every job whose description's external link (see above) is
+// shared by 2+ OTHER postings in this same fetch — i.e. the link appears
+// on 3 or more jobs in total. Deliberately never used to drop/hide a
+// posting: the role itself may still be genuine even if its apply link
+// turns out to be a generic recruiter funnel, so this only marks it for
+// the UI to disclose (CareerRecommendations.tsx), never to exclude it.
+function detectGenericApplyLinks(jobs: RemotiveJob[]): Map<number, boolean> {
+  const jobIdToLink = new Map<number, string>();
+  const linkToJobIds = new Map<string, number[]>();
+
+  for (const job of jobs) {
+    const link = extractExternalDescriptionLink(job.description);
+    if (!link) continue;
+    jobIdToLink.set(job.id, link);
+    linkToJobIds.set(link, [...(linkToJobIds.get(link) ?? []), job.id]);
+  }
+
+  const flagged = new Map<number, boolean>();
+  for (const job of jobs) {
+    const link = jobIdToLink.get(job.id);
+    const groupSize = link ? (linkToJobIds.get(link)?.length ?? 0) : 0;
+    flagged.set(job.id, groupSize >= 3);
+  }
+  return flagged;
 }
 
 // Loose, additive relevance safety net — the backend cache (see the module
@@ -109,11 +167,17 @@ async function search(params: ProviderSearchParams): Promise<ProviderSearchResul
       return { source: 'remotive', jobs: [], ok: false, error: 'Remotive returned a malformed response.' };
     }
 
+    // Computed across the full fetch (every job this call got back, before
+    // the title/relevance filters below) — a job that gets filtered out
+    // here should still count toward flagging its surviving siblings that
+    // share its link.
+    const genericApplyLinkFlags = detectGenericApplyLinks(data.jobs);
+
     // A listing with no real title is rejected outright.
     const jobs = data.jobs
       .filter((job) => Boolean(job.title?.trim()))
       .filter((job) => isRelevant(job, params.what))
-      .map(mapRemotiveJob);
+      .map((job) => mapRemotiveJob(job, genericApplyLinkFlags.get(job.id) ?? false));
 
     return { source: 'remotive', jobs, ok: true };
   } catch (error) {

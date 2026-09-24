@@ -69,6 +69,17 @@ export interface NormalizedJob {
   // eligibility isn't a relevant concept (they're already city/region
   // verified by a different mechanism).
   remoteEligibilityStatus?: 'confirmed' | 'unclear';
+  // Set only by remotiveProvider.ts — true when this job's description
+  // links to the same external destination (origin + path, ignoring
+  // tracking query params) as 2+ OTHER postings in the same fetch, e.g.
+  // four differently-titled "roles" that all point to
+  // lemon.io/for-developers with only a utm_campaign difference. A strong
+  // signal the link is a generic recruiter/staffing-agency funnel rather
+  // than a page specific to this role — never used to drop/hide the
+  // posting, since the role itself may still be genuine. Absent for every
+  // other provider, and absent when Remotive gives no comparable link at
+  // all (most jobs apply directly on Remotive, which this is not flagging).
+  applyLinkIsGeneric?: boolean;
 }
 
 export interface ProviderSearchParams {

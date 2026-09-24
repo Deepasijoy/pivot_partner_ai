@@ -262,6 +262,7 @@ function toJobOpportunity(job: NormalizedJob, portabilityUser?: PortabilityUser)
     postedAt: job.postedAt,
     source: job.source,
     remoteEligibilityStatus: job.remoteEligibilityStatus,
+    applyLinkIsGeneric: job.applyLinkIsGeneric,
     portability: portabilityUser
       ? assessPortability({ title: job.title, description: job.description, remoteEligibility: job.remoteEligibility }, portabilityUser)
       : undefined,
