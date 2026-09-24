@@ -860,7 +860,27 @@ app.get('/api/jobs/himalayas', himalayasRateLimiter, async (req, res) => {
 // ~4/day, and every user search here must never count as one).
 // ============================================
 
-const remotiveCache = createRemotiveCache({ supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY })
+// Reads its own env vars directly here rather than depending on any
+// SUPABASE_URL/SUPABASE_KEY constant defined elsewhere in this file — this
+// wiring must work standalone in every deployed environment, independent
+// of whether some other, separately-authored change happens to also
+// define similarly-named constants (a prior version of this crashed
+// production with "ReferenceError: SUPABASE_URL is not defined" for
+// exactly that reason: it referenced a constant that only existed in a
+// different, uncommitted local change). Deliberately named with a
+// REMOTIVE_ prefix so it can never collide with a same-purpose constant
+// defined elsewhere in this file. Missing/unset is expected and handled
+// gracefully by remotiveCache.js itself (in-memory-only caching for this
+// process) — logged once here rather than left silent or crashing.
+const REMOTIVE_SUPABASE_URL = process.env.VITE_SUPABASE_URL
+const REMOTIVE_SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
+if (!REMOTIVE_SUPABASE_URL || !REMOTIVE_SUPABASE_KEY) {
+  console.warn(
+    '⚠️ Remotive cache: Supabase not configured (VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY not set) — falling back to in-memory-only caching for this process.'
+  )
+}
+
+const remotiveCache = createRemotiveCache({ supabaseUrl: REMOTIVE_SUPABASE_URL, supabaseKey: REMOTIVE_SUPABASE_KEY })
 
 app.get('/api/jobs/remotive', jobsRateLimiter, async (req, res) => {
   try {
