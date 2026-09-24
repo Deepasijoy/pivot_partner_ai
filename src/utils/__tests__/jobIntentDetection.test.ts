@@ -1,6 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { isActionableSkillAnalysisIntent, isActionableWorkModelComparisonIntent } from '../jobIntentDetection';
+import {
+  isActionableSkillAnalysisIntent,
+  isActionableWorkModelComparisonIntent,
+  mentionedWorkModels,
+  describeWorkModelOptions,
+} from '../jobIntentDetection';
 
 // Covers the Part 1 chat-CTA fix's detection layer: a user asking to
 // analyze their skills/skill gaps with no resume in context should short-
@@ -94,6 +99,17 @@ describe('isActionableWorkModelComparisonIntent', () => {
     }
   });
 
+  test('matches a comparison that mentions freelance alongside just one of local/remote (no longer requires both local AND remote)', () => {
+    const positives = [
+      'should I freelance or find a local job',
+      'remote work or freelancing, which is better',
+      'Is freelancing better than a local job?',
+    ];
+    for (const message of positives) {
+      assert.equal(isActionableWorkModelComparisonIntent(message), true, `expected a match for: "${message}"`);
+    }
+  });
+
   test('does not match messages mentioning only one side', () => {
     const negatives = [
       '',
@@ -102,9 +118,25 @@ describe('isActionableWorkModelComparisonIntent', () => {
       'Help me plan my move',
       'What jobs are available locally?',
       'I want a remote job',
+      'I want to freelance',
     ];
     for (const message of negatives) {
       assert.equal(isActionableWorkModelComparisonIntent(message), false, `expected no match for: "${message}"`);
     }
+  });
+});
+
+describe('mentionedWorkModels / describeWorkModelOptions', () => {
+  test('mentionedWorkModels returns only the models actually named, in local/remote/freelance order', () => {
+    assert.deepEqual(mentionedWorkModels('should I look locally or remote'), ['local', 'remote']);
+    assert.deepEqual(mentionedWorkModels('Should I look locally, remotely or freelance?'), ['local', 'remote', 'freelance']);
+    assert.deepEqual(mentionedWorkModels('should I freelance or find a local job'), ['local', 'freelance']);
+    assert.deepEqual(mentionedWorkModels('remote work or freelancing, which is better'), ['remote', 'freelance']);
+  });
+
+  test('describeWorkModelOptions joins two options with "or" and three with an Oxford comma', () => {
+    assert.equal(describeWorkModelOptions(['local', 'remote']), 'local or remote');
+    assert.equal(describeWorkModelOptions(['remote', 'freelance']), 'remote or freelance');
+    assert.equal(describeWorkModelOptions(['local', 'remote', 'freelance']), 'local, remote, or freelance');
   });
 });

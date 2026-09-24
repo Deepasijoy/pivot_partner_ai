@@ -285,9 +285,9 @@ export interface CopilotMessage {
   content: string;
   timestamp: Date;
   // Optional deterministic call-to-action attached to an assistant message
-  // (e.g. a button guiding the user to the resume parser). Absent for
-  // ordinary Groq-answered messages.
-  action?: 'open-resume-parser';
+  // (e.g. a button guiding the user to the resume parser or the
+  // destination field). Absent for ordinary Groq-answered messages.
+  action?: 'open-resume-parser' | 'open-destination-field';
 }
 
 // User-set refinements for the Housing resource-link search (Life Setup ->

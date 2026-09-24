@@ -15,6 +15,8 @@ import {
   isActionableRelocationIntent,
   isActionableSkillAnalysisIntent,
   isActionableWorkModelComparisonIntent,
+  mentionedWorkModels,
+  describeWorkModelOptions,
 } from './utils/jobIntentDetection'
 import type { JobFetchResult } from './services/jobService'
 import { jobsForCareerGuidance } from './services/jobService'
@@ -23,7 +25,7 @@ import { rankJobsForUser } from './services/recommendationService'
 import { buildAiContext } from './services/aiContextService'
 import { getMatchFitBand } from './services/matchFitBand'
 import { INITIAL_CAREER_SEARCH_STATE, type CareerSearchState } from './components/JobMatcherTab'
-import DestinationField from './components/DestinationField'
+import DestinationField, { type DestinationFieldHandle } from './components/DestinationField'
 import { useAuth } from './contexts/AuthContext'
 import { Stethoscope, Landmark, GraduationCap, LogOut, MessageCircle, X } from 'lucide-react'
 import './styles/theme.css'
@@ -116,6 +118,22 @@ function App() {
   // canonical action both the chat "Analyze My Resume" CTA and the merged
   // sidebar "Adapt My Resume" pill now trigger.
   const [focusUploadRequestId, setFocusUploadRequestId] = useState(0)
+  // Same one-shot pattern as focusUploadRequestId above, for the chat's
+  // "open-destination-field" action (see openDestinationField below) — but
+  // consumed directly in this component rather than prop-drilled to a
+  // child, since the Relocation tab's DestinationField instance already
+  // lives right here in App.tsx's own JSX.
+  const destinationFieldRef = useRef<DestinationFieldHandle>(null)
+  const [focusDestinationRequestId, setFocusDestinationRequestId] = useState(0)
+  const lastHandledDestinationFocusId = useRef(0)
+  // Remembers that the work-model-comparison flow (see
+  // isActionableWorkModelComparisonIntent below) is waiting on a
+  // destination — set when its "Where are you moving to?" message is
+  // sent, consumed by the effect below once a destination is actually
+  // set via the attached 'open-destination-field' button, so the flow
+  // automatically continues to the next question (background) instead of
+  // requiring the user to re-ask the same thing from scratch.
+  const pendingWorkModelComparisonRef = useRef<{ workModelOptions: string } | null>(null)
 
   useEffect(() => {
     const state = location.state as { initialPrompt?: string; openResumeUpload?: boolean } | null
@@ -148,6 +166,57 @@ function App() {
     goToPillar('career')
     setFocusUploadRequestId((n) => n + 1)
   }
+
+  // The equivalent canonical action for the destination field — used by
+  // the chat's "open-destination-field" action (attached to an assistant
+  // message when isActionableWorkModelComparisonIntent has no destination
+  // to work with yet; see handleUserPrompt below). Switches to the
+  // Relocation tab, then increments the one-shot focus signal consumed
+  // directly below to scroll to and focus the real DestinationField
+  // control there — the same component the Relocation tab's "Your
+  // Relocation" section and DashboardHome's "Your Move" section already
+  // use, not a new one.
+  const openDestinationField = () => {
+    goToPillar('relocation')
+    setFocusDestinationRequestId((n) => n + 1)
+  }
+
+  // Consumed directly here (unlike focusUploadRequestId, which is prop-
+  // drilled to JobMatcherTab) since the Relocation tab's DestinationField
+  // instance already lives in this component's own JSX below. The
+  // Relocation tab is only mounted while activeTab === 'relocation'
+  // (goToPillar above just set that in the same render), so
+  // destinationFieldRef.current is populated by the time this effect runs
+  // after the commit.
+  useEffect(() => {
+    if (!focusDestinationRequestId || focusDestinationRequestId === lastHandledDestinationFocusId.current) return
+    lastHandledDestinationFocusId.current = focusDestinationRequestId
+    destinationFieldRef.current?.focus()
+  }, [focusDestinationRequestId])
+
+  // Auto-continues the work-model-comparison flow once a destination is
+  // actually set, so the user never has to re-ask the same question after
+  // using the 'open-destination-field' button above — see
+  // pendingWorkModelComparisonRef's own comment. If a resume somehow got
+  // parsed in the meantime too (not the normal path, but possible), there
+  // is nothing left to ask — that reply falls through to the generic
+  // sendPrompt/Groq path on the user's next message instead of this
+  // effect inventing a scripted three-way answer itself.
+  useEffect(() => {
+    if (!destination.trim() || !pendingWorkModelComparisonRef.current || parsedProfile) return
+    const { workModelOptions } = pendingWorkModelComparisonRef.current
+    pendingWorkModelComparisonRef.current = null
+    setTimeout(() => {
+      const aiMsg: CopilotMessage = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `Great, you're moving to ${destination.trim()}. To tell you whether ${workModelOptions} suits you better, what's your background? Upload your resume for the most accurate answer, or just tell me your last role in a line.`,
+        timestamp: new Date(),
+        action: 'open-resume-parser',
+      }
+      pushMessage(aiMsg)
+    }, 400)
+  }, [destination, parsedProfile])
 
   // Direct, non-text-matched wiring for every built-in UI element that
   // represents a skill-gap/resume-analysis request with an exact, known
@@ -314,20 +383,30 @@ Open Career & Income to see your full skill-gap breakdown and career paths.`,
       return
     }
 
-    // Same short-circuit shape as the branches above, for a local-vs-remote
-    // work-model question with no resume/background known yet (see
-    // isActionableWorkModelComparisonIntent). Without this, the question
-    // reaches Groq with no CAREER PROFILE and, per real observed behavior,
-    // comes back as a 4-item questionnaire (past career, destination/work
-    // authorization, skills, work model) — even when a destination is
-    // already set. Destination is already known here (buildContext()
-    // includes it), so this only needs to ask about background — the one
-    // thing genuinely missing — acknowledging the destination by name, with
-    // the resume CTA attached for the fastest accurate answer. Once the
-    // user replies with any background (even a one-line reply, no parsed
-    // resume needed), that reply falls through to the generic sendPrompt
-    // call below like any other message, where SYSTEM_PROMPT's "ask at most
-    // one question" rules take over using the conversation history.
+    // Same short-circuit shape as the branches above, for a local/remote/
+    // freelance work-model comparison with no resume/background known yet
+    // (see isActionableWorkModelComparisonIntent). Without this, the
+    // question reaches Groq with no CAREER PROFILE and, per real observed
+    // behavior, comes back as a 4-item questionnaire (past career,
+    // destination/work authorization, skills, work model) — even when a
+    // destination is already set. Two states, each with its own action
+    // button so the user never has to go find the control themselves
+    // (mirroring the skill-gap branch above exactly):
+    //  - No destination at all: ask for it, with the SAME
+    //    'open-destination-field' action as the button below, which
+    //    focuses the existing Relocation-tab DestinationField — not a new
+    //    control.
+    //  - Destination known, background not: ask about background, with
+    //    'open-resume-parser' attached, same as before.
+    // Once the user replies with a destination or any background (even a
+    // one-line reply, no parsed resume/structured destination needed),
+    // that reply falls through to the generic sendPrompt call below like
+    // any other message, where SYSTEM_PROMPT's "ask at most one question"
+    // rules take over using the conversation history. mentionedWorkModels/
+    // describeWorkModelOptions ensure both messages, and the eventual
+    // answer, only ever discuss the options the user actually asked about
+    // (never silently dropping "freelance" down to a local-vs-remote-only
+    // answer just because the user's phrasing didn't say "remote").
     if (!parsedProfile && isActionableWorkModelComparisonIntent(text)) {
       const userMsg: CopilotMessage = {
         id: Date.now().toString(),
@@ -338,23 +417,28 @@ Open Career & Income to see your full skill-gap breakdown and career paths.`,
       pushMessage(userMsg)
 
       const destinationLabel = destination.trim()
+      const workModelOptions = describeWorkModelOptions(mentionedWorkModels(text))
 
       setTimeout(() => {
         const aiMsg: CopilotMessage = destinationLabel
           ? {
               id: (Date.now() + 1).toString(),
               role: 'assistant',
-              content: `Great, you're moving to ${destinationLabel}. To tell you whether local or remote suits you better, what's your background? Upload your resume for the most accurate answer, or just tell me your last role in a line.`,
+              content: `Great, you're moving to ${destinationLabel}. To tell you whether ${workModelOptions} suits you better, what's your background? Upload your resume for the most accurate answer, or just tell me your last role in a line.`,
               timestamp: new Date(),
               action: 'open-resume-parser',
             }
           : {
               id: (Date.now() + 1).toString(),
               role: 'assistant',
-              content: "Where are you moving to? Once I know your destination, I can tell you whether local or remote work suits you better there.",
+              content: `Where are you moving to? Once I know your destination, I can tell you whether ${workModelOptions} work suits you better there.`,
               timestamp: new Date(),
+              action: 'open-destination-field',
             }
         pushMessage(aiMsg)
+        if (!destinationLabel) {
+          pendingWorkModelComparisonRef.current = { workModelOptions }
+        }
       }, 500)
 
       return
@@ -679,6 +763,7 @@ Your career can travel with you.`,
             onSendPrompt={handleUserPrompt}
             onQuickAction={handleQuickAction}
             onOpenResumeParser={openResumeUpload}
+            onOpenDestinationField={openDestinationField}
             onSkillGapQuickStart={() => startSkillGapResumeUpload('Find my skill gaps')}
           />
         </div>
@@ -775,6 +860,7 @@ Your career can travel with you.`,
                         why it's padding on the wrapper, not margin on the
                         select itself. */}
                     <DestinationField
+                      ref={destinationFieldRef}
                       idPrefix="relocation"
                       countryLabel="Moving To"
                       countryCode={destinationCountryCode}
@@ -1025,6 +1111,10 @@ Your career can travel with you.`,
                 onOpenResumeParser={() => {
                   setIsMobileChatOpen(false)
                   openResumeUpload()
+                }}
+                onOpenDestinationField={() => {
+                  setIsMobileChatOpen(false)
+                  openDestinationField()
                 }}
                 onSkillGapQuickStart={() => {
                   setIsMobileChatOpen(false)

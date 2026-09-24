@@ -94,15 +94,50 @@ export function isActionableSkillAnalysisIntent(message: string): boolean {
 // "Should I look locally, remotely or freelance?" and "Compare local vs
 // remote vs freelance" quick-start prompts — a question this app's own
 // LOCAL/REMOTE/FREELANCE income-path framework exists specifically to
-// answer. A simple "local" + "remote" co-occurrence is a strong,
-// unambiguous signal in this product's career/relocation-only domain (see
-// SYSTEM_PROMPT's INCOME section in server.js), so no fixed phrase list is
-// needed here.
+// answer. Two-or-more-of-three co-occurrence (not just local+remote) is a
+// strong, unambiguous signal in this product's career/relocation-only
+// domain (see SYSTEM_PROMPT's INCOME section in server.js) — broadened
+// from local+remote-only so a question like "should I freelance or find a
+// local job" (no "remote" at all) or "remote work or freelancing, which is
+// better" (no "local" at all) still triggers this, not just the original
+// local-vs-remote phrasing. A single work-model word alone ("I want a
+// remote job") is not a comparison question and must not trigger this —
+// see the negative test cases.
 const LOCAL_WORD = /\blocal(ly)?\b/i;
 const REMOTE_WORD = /\bremote(ly)?\b/i;
+const FREELANCE_WORD = /\bfreelanc(?:e|ing|er)\b/i;
 
 export function isActionableWorkModelComparisonIntent(message: string): boolean {
   const lower = message.trim().toLowerCase();
   if (!lower) return false;
-  return LOCAL_WORD.test(lower) && REMOTE_WORD.test(lower);
+  const mentionCount = [LOCAL_WORD, REMOTE_WORD, FREELANCE_WORD].filter((pattern) => pattern.test(lower)).length;
+  return mentionCount >= 2;
+}
+
+export type WorkModelMention = 'local' | 'remote' | 'freelance';
+
+// Which of the three work models the message actually named, in a fixed
+// display order (local, remote, freelance) — used so the chat flow that
+// follows isActionableWorkModelComparisonIntent only ever discusses the
+// options the user actually asked about (e.g. never silently narrowing
+// "should I freelance or find a local job" down to a local-vs-remote
+// answer just because that used to be the only phrasing this recognized).
+export function mentionedWorkModels(message: string): WorkModelMention[] {
+  const lower = message.trim().toLowerCase();
+  const mentions: WorkModelMention[] = [];
+  if (LOCAL_WORD.test(lower)) mentions.push('local');
+  if (REMOTE_WORD.test(lower)) mentions.push('remote');
+  if (FREELANCE_WORD.test(lower)) mentions.push('freelance');
+  return mentions;
+}
+
+// Natural-language join for mentionedWorkModels()'s output — "local or
+// remote", "local, remote, or freelance". Falls back to naming all three
+// only if somehow called with fewer than 2 mentions (never expected given
+// isActionableWorkModelComparisonIntent's own >=2 gate, but a safe,
+// non-empty default rather than an awkward empty/singular string).
+export function describeWorkModelOptions(mentions: WorkModelMention[]): string {
+  if (mentions.length < 2) return 'local, remote, or freelance';
+  if (mentions.length === 2) return `${mentions[0]} or ${mentions[1]}`;
+  return `${mentions.slice(0, -1).join(', ')}, or ${mentions[mentions.length - 1]}`;
 }

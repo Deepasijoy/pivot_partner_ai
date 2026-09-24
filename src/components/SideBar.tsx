@@ -14,6 +14,7 @@ import {
   ArrowLeftRight,
   Compass,
   ListChecks,
+  MapPin,
 } from 'lucide-react';
 
 // Renders assistant messages (which arrive as Markdown from the Groq model)
@@ -57,6 +58,11 @@ interface SidebarProps {
   onSendPrompt: (message: string) => void;
   onQuickAction: (action: 'jobs' | 'tax' | 'resume') => void;
   onOpenResumeParser: () => void;
+  // Attached to an assistant message via action: 'open-destination-field'
+  // (see App.tsx's isActionableWorkModelComparisonIntent branch) — focuses
+  // the existing Relocation-tab DestinationField, the same component the
+  // Relocation tab and DashboardHome already use, never a new control.
+  onOpenDestinationField: () => void;
   // Direct action for the "Find my skill gaps" quick-start prompt below —
   // it reproduces the exact phrase isActionableSkillAnalysisIntent already
   // matches, so routing it through onSendPrompt/text-matching would make a
@@ -79,6 +85,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onSendPrompt,
   onQuickAction,
   onOpenResumeParser,
+  onOpenDestinationField,
   onSkillGapQuickStart,
 }) => {
   const [inputValue, setInputValue] = useState('');
@@ -236,6 +243,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                   >
                     <FileText size={13} aria-hidden="true" />
                     Analyze my resume
+                  </button>
+                )}
+
+                {msg.role === 'assistant' && msg.action === 'open-destination-field' && (
+                  <button
+                    type="button"
+                    onClick={onOpenDestinationField}
+                    className="mt-3 flex items-center gap-1.5 rounded-md bg-[#26c485] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1a8b5a]"
+                  >
+                    <MapPin size={13} aria-hidden="true" />
+                    Set my destination
                   </button>
                 )}
 
