@@ -71,10 +71,23 @@ function hasSkill(skills: Skill[], name: string): boolean {
   return skills.some((skill) => skill.name.toLowerCase() === name.toLowerCase());
 }
 
-function describeSkillGaps(skillGaps: SkillGap[]): { names: string; totalWeeks: number } {
-  const names = skillGaps.map((gap) => gap.skill.name).join(', ');
-  const totalWeeks = skillGaps.reduce((sum, gap) => sum + gap.estimatedTimeWeeks, 0);
-  return { names, totalWeeks };
+// Org-context gaps (SkillGap.requiresOrgContext — see skillAnalysisService.ts's
+// ORG_CONTEXT_SKILL_IDS) denote organizational scope/authority, not a
+// self-study-able ability, so they're excluded from the closable-gap
+// names/totalWeeks here and surfaced separately via orgContextNames —
+// callers must not fold them into a "spend N weeks closing the gap in X"
+// framing.
+function describeSkillGaps(skillGaps: SkillGap[]): { names: string; totalWeeks: number; orgContextNames: string[] } {
+  const closableGaps = skillGaps.filter((gap) => !gap.requiresOrgContext);
+  const names = closableGaps.map((gap) => gap.skill.name).join(', ');
+  const totalWeeks = closableGaps.reduce((sum, gap) => sum + gap.estimatedTimeWeeks, 0);
+  const orgContextNames = skillGaps.filter((gap) => gap.requiresOrgContext).map((gap) => gap.skill.name);
+  return { names, totalWeeks, orgContextNames };
+}
+
+function describeOrgContextSkills(orgContextNames: string[]): string {
+  const verb = orgContextNames.length === 1 ? 'is' : 'are';
+  return `${orgContextNames.join(', ')} ${verb} typically gained on the job rather than beforehand.`;
 }
 
 // Three honest states for a job-based Career Path, replacing the previous
@@ -114,8 +127,14 @@ function buildJobCareerPath(id: string, job: JobOpportunity, userSkills: Skill[]
       matchedSkillNames.length > 0
         ? `You already bring ${matchedSkillNames.slice(0, 3).join(', ')}, covering ${matchedSkillNames.length} of the ${job.requiredSkills.length} skills this role requires.`
         : `This role fits your target location and work preferences, though it will require building new skills from scratch.`;
-    const { names, totalWeeks } = describeSkillGaps(skillGaps);
-    recommendedAction = `Spend roughly ${totalWeeks} weeks closing the gap in ${names}, then apply to ${job.company}.`;
+    const { names, totalWeeks, orgContextNames } = describeSkillGaps(skillGaps);
+    if (names && orgContextNames.length > 0) {
+      recommendedAction = `Spend roughly ${totalWeeks} weeks closing the gap in ${names}, then apply to ${job.company}. ${describeOrgContextSkills(orgContextNames)}`;
+    } else if (names) {
+      recommendedAction = `Spend roughly ${totalWeeks} weeks closing the gap in ${names}, then apply to ${job.company}.`;
+    } else {
+      recommendedAction = `${describeOrgContextSkills(orgContextNames)} Apply to ${job.company} and build this once you're in the role.`;
+    }
   }
 
   const opportunities = matchedJobs.filter((j) => j.matchScore >= job.matchScore - 10).length;
@@ -179,8 +198,14 @@ function buildFreelanceCareerPath(
 
   let recommendedAction: string;
   if (skillGaps.length > 0) {
-    const { names, totalWeeks } = describeSkillGaps(skillGaps);
-    recommendedAction = `Take a focused course in ${names} (~${totalWeeks} weeks) to strengthen your bids, then apply to gigs like "${topGig.title}" on ${topGig.platform}.`;
+    const { names, totalWeeks, orgContextNames } = describeSkillGaps(skillGaps);
+    if (names && orgContextNames.length > 0) {
+      recommendedAction = `Take a focused course in ${names} (~${totalWeeks} weeks) to strengthen your bids, then apply to gigs like "${topGig.title}" on ${topGig.platform}. ${describeOrgContextSkills(orgContextNames)}`;
+    } else if (names) {
+      recommendedAction = `Take a focused course in ${names} (~${totalWeeks} weeks) to strengthen your bids, then apply to gigs like "${topGig.title}" on ${topGig.platform}.`;
+    } else {
+      recommendedAction = `${describeOrgContextSkills(orgContextNames)} Apply to gigs like "${topGig.title}" on ${topGig.platform} and build this once you're engaged.`;
+    }
   } else {
     recommendedAction = `Create a ${topGig.platform} profile and start bidding on gigs like "${topGig.title}" — you already meet the required skills.`;
   }

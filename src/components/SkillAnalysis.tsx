@@ -46,7 +46,12 @@ function formatTimeline(path: CareerPath): string {
   // matchingService.ts's resolveJobCareerPathState / Step C.
   if (path.dataState === 'insufficient_data') return 'Requirements not specified';
   if (path.skillGaps.length === 0) return 'Ready now';
-  const totalWeeks = path.skillGaps.reduce((sum, gap) => sum + gap.estimatedTimeWeeks, 0);
+  // Org-context gaps (requiresOrgContext) aren't closable via self-study, so
+  // they're excluded from the week-count sum rather than padding it with a
+  // number that isn't a real estimate.
+  const closableGaps = path.skillGaps.filter((gap) => !gap.requiresOrgContext);
+  if (closableGaps.length === 0) return 'Mostly gained on the job';
+  const totalWeeks = closableGaps.reduce((sum, gap) => sum + gap.estimatedTimeWeeks, 0);
   return `~${totalWeeks} weeks to close skill gaps`;
 }
 
@@ -158,7 +163,9 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
                 >
                   <p className="font-medium text-[var(--text-dark)]">{gap.skill.name}</p>
                   <p className="mt-1 text-sm text-[var(--text-light)]">
-                    Est. {gap.estimatedTimeWeeks} {gap.estimatedTimeWeeks === 1 ? 'week' : 'weeks'} to close
+                    {gap.requiresOrgContext
+                      ? 'Typically gained on the job'
+                      : `Est. ${gap.estimatedTimeWeeks} ${gap.estimatedTimeWeeks === 1 ? 'week' : 'weeks'} to close`}
                   </p>
                 </div>
               ))}
@@ -286,7 +293,9 @@ const SkillAnalysis: React.FC<SkillAnalysisProps> = ({ profile, onCareerPathsGen
                             >
                               <p className="text-sm font-medium text-[var(--text-dark)]">{gap.skill.name}</p>
                               <p className="text-xs text-[var(--text-light)]">
-                                Est. {gap.estimatedTimeWeeks} {gap.estimatedTimeWeeks === 1 ? 'week' : 'weeks'} to close
+                                {gap.requiresOrgContext
+                                  ? 'Typically gained on the job'
+                                  : `Est. ${gap.estimatedTimeWeeks} ${gap.estimatedTimeWeeks === 1 ? 'week' : 'weeks'} to close`}
                               </p>
                             </div>
                           ))}

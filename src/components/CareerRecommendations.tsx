@@ -403,7 +403,10 @@ const CareerRecommendations: React.FC<CareerRecommendationsProps> = ({
                       key={gap.skill.name}
                       className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200"
                     >
-                      ◯ {gap.skill.name} (~{gap.estimatedTimeWeeks} {gap.estimatedTimeWeeks === 1 ? 'wk' : 'wks'})
+                      ◯ {gap.skill.name}
+                      {gap.requiresOrgContext
+                        ? ' (gained on the job)'
+                        : ` (~${gap.estimatedTimeWeeks} ${gap.estimatedTimeWeeks === 1 ? 'wk' : 'wks'})`}
                     </span>
                   ))}
                 </div>

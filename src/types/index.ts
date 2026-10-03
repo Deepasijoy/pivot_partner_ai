@@ -75,6 +75,13 @@ export interface SkillGap {
   currentLevel: number;
   requiredLevel: number;
   estimatedTimeWeeks: number;
+  // True for a small curated set of ESCO skills (see ORG_CONTEXT_SKILL_IDS
+  // in skillAnalysisService.ts) that denote organizational scope/authority
+  // (e.g. "manage data," "information confidentiality") rather than a
+  // self-study-able ability — not closable via a course or solo project, so
+  // estimatedTimeWeeks must not be displayed or summed as a real timeline
+  // for these.
+  requiresOrgContext?: boolean;
 }
 
 // The occupation/domain-compatibility tier computed by

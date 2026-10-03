@@ -1,6 +1,22 @@
 import type { Skill, SkillGap, CourseRecommendation } from '../types';
 import { mockSkillTaxonomy, mockCourses } from './mockData';
 
+// ESCO skill ids that denote organizational scope/authority (e.g. "manage
+// data," "information confidentiality") rather than a self-study-able
+// ability. Confirmed empirically that ESCO's own skillType/reuseLevel
+// attributes don't discriminate this axis — e.g. "information
+// confidentiality" and "data mining" share identical skillType/reuseLevel
+// despite one requiring org mandate and the other being self-learnable — so
+// this is a small hand-curated list, not derived from taxonomy metadata.
+// Expand deliberately; each id should be a skill no solo project or course
+// can realistically close.
+const ORG_CONTEXT_SKILL_IDS = new Set<string>([
+  'skill:453', // establish data processes
+  'skill:1581', // manage data
+  'skill:1640', // information confidentiality
+  'skill:679', // integrate ICT data
+]);
+
 export function normalizeSkills(rawSkills: string[]): Skill[] {
   const allSkills = [...mockSkillTaxonomy.technical, ...mockSkillTaxonomy.business];
 
@@ -29,6 +45,7 @@ export function calculateSkillGaps(userSkills: Skill[], jobRequirements: Skill[]
       currentLevel: 0,
       requiredLevel: 90,
       estimatedTimeWeeks,
+      requiresOrgContext: skill.escoId ? ORG_CONTEXT_SKILL_IDS.has(skill.escoId) : false,
     };
   });
 }
